@@ -1,0 +1,212 @@
+
+title: "Import and normalise Maryland CC"
+author: "Asbjørn"
+date: "2022/2/24"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+library(tidyverse)
+#library(annotables)
+library(edgeR)
+library(RColorBrewer)
+library(ggrepel)
+```
+
+
+This code is to import the Maryland data and produce normalised and filtered data.
+
+
+
+### Add sample info
+
+```{r add info}
+info_OFC <- 
+  readxl::read_xlsx("/Users/asbjorh/PhD/ANK3_HTS-amplicons/Maryland/data/Maryland_Samples_NBB1582DonorInfo_cleaned.xlsx", sheet = 1, col_names = TRUE) %>% 
+  dplyr::select(c("RNA ID", "AGEYEARS", "AGEDAYS", "RIN AMG", "RNAseq", "PMINTERVAL", "CDEATHOFF")) %>% filter(RNAseq!=0) %>% select(-RNAseq)
+  distinct()
+
+#simplify the names of samples to match data
+info_OFC$`RNA ID` <-  str_remove(info_OFC$`RNA ID`, "MD_")
+info_OFC$`RNA ID` <-  str_remove(info_OFC$`RNA ID`, "_RNA")
+info_OFC$`RNA ID` <-  str_replace(info_OFC$`RNA ID`, "_", "-")
+info_OFC <- dplyr::rename(info_OFC, sampleID="RNA ID")
+
+info_OFC <- info_OFC %>% filter(!(sampleID=="5162-BA11" & `RIN AMG`== 9.6)) #this sample has 2 entries, unknown which was used for RNAseq, remove best RIN, keep RIN = 9.1
+
+info_OFC <- dplyr::rename(info_OFC, RIN_AMG="RIN AMG")
+
+info_OFC$sampleID <- str_remove(info_OFC$sampleID,  "-BA11")
+
+info_CC <- 
+  readxl::read_xlsx("/Users/asbjorh/proj_Maryland_WGCNA/RNAseq_CC samples_december_2021/sample_table_96_RNAseq_cleaned.xlsx", sheet = 1, col_names = TRUE)
+
+info_CC <- 
+  info_CC %>% 
+  select(sampleID, RIN_AMG)
+
+info_CC$sampleID <- as.character(info_CC$sampleID)
+
+info_CC <- 
+  info_CC %>% left_join(select(info_OFC, -RIN_AMG), by= "sampleID")
+
+```
+
+
+
+```{r import counts CC}
+f = list.files("/Users/asbjorh/PhD/RNAseq_temporal/data/CC/Hughes-RNA6-2021-12-08/40_countData/",  pattern= ".counts$", full.names  = TRUE)
+
+
+dat = lapply(f, 
+             function(i){          #get the data from each sample
+  x = read_tsv(i, col_names = FALSE, skip = 2)
+  x = x[, c(1,6,7)] 
+  # add a column to say which file they're from
+  x$file = i
+  # Return your data
+  x
+}
+)
+
+
+d<-
+  do.call("rbind.data.frame", dat) #make a dataframe out of the imported datasets (combine by )
+
+
+d$file <- #remove unnescessary prefix text from sample names
+  str_remove(d$file, "/Users/asbjorh/PhD/RNAseq_temporal/data/CC/Hughes-RNA6-2021-12-08/40_countData//") 
+
+d$file  <- #replace unnescessary suffix text from sample names
+  str_replace(d$file , ".counts", "-CC") 
+
+
+d <- 
+  pivot_wider(d, names_from= file, values_from = X7 ) 
+
+sampleID <- colnames(d)[-c(1,2)]
+
+d <- base::as.data.frame(d)
+rownames(d) <- d$X1
+d <- d[,-1]
+
+length <- d[,1]
+d <- d[,-1]
+length <- base::as.vector(length)
+names(length) <- rownames(d) #create a named vector with gene lengths, as considered by RSEM
+
+
+```
+
+
+
+
+##################### BRAIN-GVEX #####################
+
+## Process data
+library(magrittr)
+
+path <- "/Users/ibrahiaa/rnaseq_brain_data_sets/PsychENCODE/asbjørn_si_score/DE_OFC_5sets_TSD/"
+
+clinMeta <- read.csv(paste0(path," info_GVEX.txt"), sep="\t", header=T)
+count <- read.csv(paste0(path," count_GVEX.txt"), sep=",", header=T, check.names=F)
+colnames(count)[1] <- "gene_id"
+
+id <- subset(clinMeta, Study=="SMRI" & PrimaryDiagnosis %in% c("BD","HC") & Ethnicity =="CAUC")$SampleID %>% unique
+data <- count[,c("gene_id",id)]
+
+data$gene_id <- gsub("\\..*","",data$gene_id)
+data <- data[ duplicated(data$gene_id) == F,]
+rownames(data) <- data$gene_id
+data <- data[,-1]
+#data <- round(data) # round data since RSEM output may be non-integer
+
+colData <- clinMeta
+rownames(colData) <- colData$SampleID
+colData <- colData[colnames(data),]
+all( rownames(colData) == colnames(data))
+colData[,c(2,4,5,6)] <- lapply(colData[,c(2,4,5,6)],as.factor)
+colData[,c(3,7,8)] <- lapply(colData[,c(3,7,8)],as.numeric)
+colData$PrimaryDiagnosis <- relevel(colData$PrimaryDiagnosis, ref="HC")
+
+colData.filt <- subset(colData, SampleID %in% id)
+
+data <- data[,rownames(colData.filt)]
+all( rownames(colData.filt) == colnames(data))
+
+
+library(biomaRt)
+ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="useast.ensembl.org")
+genemap <- getBM(attributes=c("entrezgene_id","ensembl_gene_id", "external_gene_name", "gene_biotype", "chromosome_name", "start_position", "end_position"), filters="ensembl_gene_id", 
+	values=rownames(data), mart=ensembl)
+genemap <- genemap[ duplicated(genemap$ensembl_gene_id) == F,]
+rownames(genemap) <- genemap$ensembl_gene_id
+
+
+## Remove lowly expressed genes
+
+library(edgeR)
+keep <- filterByExpr(data, design=colData.filt$PrimaryDiagnosis)
+data.filt <- data[keep,]
+
+
+## Keep only protein-coding and lncRNA genes
+genemap2 <- genemap[rownames(data.filt),]
+genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding","lncRNA"))
+data.filt <- data.filt[rownames(genemap2),]
+
+
+## DE analyses
+
+library(limma)
+
+y <- DGEList(counts = data.filt, genes = genemap2, samples=colData.filt)
+y <- calcNormFactors(y)
+
+design <- model.matrix(~ PrimaryDiagnosis + ReportedGender + Age + RIN + PMI, data = colData.filt)
+
+v <- voomWithQualityWeights(y, design, plot = TRUE)
+fit <- lmFit(v, design)
+fit <- eBayes(fit)
+summary(decideTests(fit, p.value=0.1))
+
+res <- topTable(fit, coef="PrimaryDiagnosisBD", n=Inf, p.value=1)
+write.table(res, "/Users/ibrahiaa/rnaseq_brain_data_sets/PsychENCODE/asbjørn_si_score/de_limma_gvex_smri.txt", sep="\t", row.names=F)
+
+
+## Plot significant genes
+library(ggsci)
+library(ggpubr)
+
+col <- get_palette("aaas", 10)
+
+df <- cpm(y, log=TRUE, prior.count=3) %>% t %>% data.frame
+df <- df[ , rownames(head(res,10)) ]
+colnames(df) <- head(res,10)$external_gene_name
+df <- merge(df,colData.filt,by=0) 
+
+glist <- lapply(2:11, function (x) {
+  ggplot() + 
+    geom_boxplot(data=df,aes(x = PrimaryDiagnosis, y = df[,x]), color ="black",size=0.7, outlier.shape=NA, fill="white") +
+    geom_point(data=df,aes(x = PrimaryDiagnosis, y = df[,x], color = PrimaryDiagnosis, fill=PrimaryDiagnosis), position=position_jitterdodge(), pch=21,size=3.5, color="black", alpha=0.85) + 
+    labs(title=colnames(df)[x],x="",y="") +
+    scale_colour_manual(values=col[c(2,9,8)]) +
+    scale_fill_manual(values=col[c(2,9,8)]) +
+    theme_classic() +
+    theme(axis.text.x=element_text(size=20,color="black", angle=0, hjust=0.5),
+          axis.text.y=element_text(size=20,color="black"),
+          axis.title=element_text(size=16),
+          plot.title=element_text(size=20,hjust=0.5),
+          legend.text=element_text(size=20),
+          legend.title=element_blank(),
+          plot.margin=unit(c(0,0,0,0),"cm"),
+          panel.background=element_rect(linetype="solid", color="black", size=1)) 
+})
+
+annotate_figure(ggarrange(plotlist=glist,ncol=5,nrow=2,common.legend=T,legend="none"),
+                left=text_grob("Normalized expression",size=20,rot=90))
