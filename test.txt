@@ -1,2 +1,7 @@
+<<<<<<< HEAD
 this is a test file
 it has been changed now
+=======
+#this is a test file
+#And here are some changes that were added to the online rpo by someone else, perhaps.
+>>>>>>> 91fb138e2dd46d13116724fc0b898e29f0f85b2b
