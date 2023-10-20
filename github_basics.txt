@@ -1,0 +1,78 @@
+More information on this resource: https://git-scm.com/book/en/v2/Git-Basics-Getting-a-Git-Repository
+
+
+1. Open terminal
+Install git if needed https://git-scm.com/book/en/v2/Getting-Started-Installing-Git
+
+2. Check setup, especially "Your identity" https://git-scm.com/book/en/v2/Getting-Started-First-Time-Git-Setup
+
+I am personally not a fan of the text editor Vim, so I prefer the simpler nano for adding comments etc (see below). If you agree, run 
+git config --global core.editor "nano"
+
+##initiate version control
+3. On the terminal, navigate to a project directory. Make a new one if necessary, e.g. ~/proj_Maryland_WGCNA/analysis/
+
+4. Type the command to copy the existing files from github
+git clone https://github.com/comgen/developmental
+(For now, this is a public repository, so in theory anyone with this link can do the same.)
+
+5. cd into /developmental/ and notice with ls -a that it also includes a .git file
+
+##add a new file to the repository
+6. Copy the file into the repository directory, here ~/proj_Maryland_WGCNA/analysis/developmental/
+
+7. Make git aware of the file with the command
+git add <filename>
+
+8. Work on the file, and save the changes in the ~/proj_Maryland_WGCNA/analysis/developmental/ directory.
+
+
+9. Commit your changes. This is typically done after the end of your day, or when you go over to work on a different project.
+The -a option is to automate the staging process*. 
+Whenever you commit, you have to add a sentence to describe what you've changed or added; type your commit message inline with the commit command by specifying it after a -m flag
+
+git commit -a -m "Added code for DE analysis with LIMMA"
+
+You now have proper version control locally
+git status 
+
+
+10. If you are the only one working on these files, everything will be up to date and you can save to the github repo online. 
+
+First double check that there are no changes you haven't seen
+git pull
+
+If "already up to date", you can upload your changes to the github repository online with 
+git push
+
+You probably will be prompted for a password. For security, you can't use your github login password here anymore. You have to make a new "password" called a token. https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic
+When you make your token, remember to tick the box "repo
+Full control of private repositories " to give it access. You will only be able to see this token once, so make sure to copy it into a password manager of sort (e.g. Apple's Password). It has by default an expiry date of 30 days, so you will find yourself doing this again.
+
+enter github username and password (=token above). 
+
+git push 
+
+The last commited version of your file(s) are no uploaded onto the github repository as the current version.
+
+
+
+
+##integrate your work with the online repository (including Tim and Asbjørn's work)
+10. 
+Inspect the latest version on the server. It may have been changed by somenone else. 
+Running git pull generally fetches data from the server you originally cloned from and automatically tries to merge it into the code you’re currently working on.
+
+11. 
+
+
+
+
+* For more advanced actions, one could add an extra "add"-stage here:
+Stage the changed file:
+"To stage it, you run the git add command. git add is a multipurpose command — you use it to begin tracking new files, to stage files, and to do other things like marking merge-conflicted files as resolved. It may be helpful to think of it more as “add precisely this content to the next commit” rather than “add this file to the project”"
+git add <filename>
+git status #shows you the files that are added and changed
+
+
+
