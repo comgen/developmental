@@ -28,8 +28,7 @@ This code is to import the Maryland data and produce normalised and filtered dat
 ```{r add info}
 info_OFC <- 
   readxl::read_xlsx("/Users/asbjorh/PhD/ANK3_HTS-amplicons/Maryland/data/Maryland_Samples_NBB1582DonorInfo_cleaned.xlsx", sheet = 1, col_names = TRUE) %>% 
-  dplyr::select(c("RNA ID", "AGEYEARS", "AGEDAYS", "RIN AMG", "RNAseq", "PMINTERVAL", "CDEATHOFF")) %>% filter(RNAseq!=0) %>% select(-RNAseq)
-  distinct()
+  dplyr::select(c("RNA ID", "AGEYEARS", "AGEDAYS", "RIN AMG", "RNAseq", "PMINTERVAL", "CDEATHOFF")) %>% filter(RNAseq!=0) %>% select(-RNAseq) %>% distinct()
 
 #simplify the names of samples to match data
 info_OFC$`RNA ID` <-  str_remove(info_OFC$`RNA ID`, "MD_")
@@ -43,8 +42,9 @@ info_OFC <- dplyr::rename(info_OFC, RIN_AMG="RIN AMG")
 
 info_OFC$sampleID <- str_remove(info_OFC$sampleID,  "-BA11")
 
-info_CC <- 
-  readxl::read_xlsx("/Users/asbjorh/proj_Maryland_WGCNA/RNAseq_CC samples_december_2021/sample_table_96_RNAseq_cleaned.xlsx", sheet = 1, col_names = TRUE)
+info_CC <-
+readxl::read_xlsx("~/proj_Maryland_WGCNA/data/RNAseq_CC samples_december_2021/sample_table_96_RNAseq_cleaned.xlsx", sheet = 1, col_names = TRUE)
+
 
 info_CC <- 
   info_CC %>% 
@@ -55,14 +55,53 @@ info_CC$sampleID <- as.character(info_CC$sampleID)
 info_CC <- 
   info_CC %>% left_join(select(info_OFC, -RIN_AMG), by= "sampleID")
 
+
+#change age (years+days) into decimal years. Remove cause of death.
+
+info_CC <- 
+  info_CC %>% 
+  mutate(sampleID = paste0(sampleID, "-CC")) %>% 
+  dplyr::mutate(AGE = AGEYEARS + (AGEDAYS/365)) %>%
+    select(-AGEYEARS, -AGEDAYS)
+
+info_OFC <- 
+  info_OFC %>% select(-CDEATHOFF) %>% 
+  dplyr::mutate(AGE = AGEYEARS + (AGEDAYS/365)) %>%
+    select(-AGEYEARS, -AGEDAYS)
+
+#mke a category for age. IA suggested +-12 Years, based on Kang et al (2011)'s definition of adolescence 
+
+info_CC <-
+  info_CC %>% 
+  mutate(below12 = case_when(
+    AGE < 12  ~ 1,
+    TRUE ~ 0)
+  )
+
+info_CC$below12 <- as.factor(info_CC$below12)
 ```
 
 
 
 ```{r import counts CC}
-f = list.files("/Users/asbjorh/PhD/RNAseq_temporal/data/CC/Hughes-RNA6-2021-12-08/40_countData/",  pattern= ".counts$", full.names  = TRUE)
+f = list.files("/Users/asbjorh/PhD/RNAseq_temporal/data/CC/Hughes-RNA6-2021-12-08/20_mapDataRSEM/",  pattern= ".genes.results$", full.names  = TRUE) #results from RSEM
+
+f = list.files("/Users/asbjorh/PhD/RNAseq_temporal/data/CC/Hughes-RNA6-2021-12-08/40_countData/",  pattern= ".counts$", full.names  = TRUE) #results from 
 
 
+#if RSEM results:
+#dat = lapply(f, 
+#             function(i){          #get the data from each sample
+#  x = read_tsv(i, col_names = TRUE, skip = 0)
+#  x = x[, c(1,4,5)] 
+#  # add a column to say which file they're from
+#  x$file = i
+#  # Return your data
+#  x
+#}
+#)
+
+#if featurecounts results:
 dat = lapply(f, 
              function(i){          #get the data from each sample
   x = read_tsv(i, col_names = FALSE, skip = 2)
@@ -87,18 +126,90 @@ d$file  <- #replace unnescessary suffix text from sample names
 
 
 d <- 
-  pivot_wider(d, names_from= file, values_from = X7 ) 
+  pivot_wider(dplyr::select(d, -X6), names_from= file, values_from = X7 ) 
 
-sampleID <- colnames(d)[-c(1,2)]
+ count <- d %>% column_to_rownames(var="X1")
 
-d <- base::as.data.frame(d)
-rownames(d) <- d$X1
-d <- d[,-1]
 
-length <- d[,1]
-d <- d[,-1]
-length <- base::as.vector(length)
-names(length) <- rownames(d) #create a named vector with gene lengths, as considered by RSEM
+
+#if using RSEM data
+#d$file <- #remove unnescessary prefix text from sample names
+ # str_remove(d$file, "/Users/asbjorh/PhD/RNAseq_temporal/data/CC/Hughes-RNA6-2021-12-08/20_mapDataRSEM//") 
+
+#d$file  <- #replace unnescessary suffix text from sample names
+ # str_replace(d$file , "_rsemExpr.genes.results", "-CC") 
+
+#count <- d %>% select(gene_id, file, expected_count) %>% pivot_wider(names_from = file, values_from = expected_count, id_cols = gene_id) 
+#count <- count %>% column_to_rownames(var="gene_id")
+
+
+```
+
+```{r Process data CC}
+library(magrittr)
+library(biomaRt)
+
+clinMeta <- info_CC
+count <- count
+
+SampleID <- colnames(count)[colnames(count) %in% clinMeta$sampleID] #make any other adjustments to which samples to include/ exclude here
+
+data <- count[,colnames(count) %in% (SampleID)] #count is already in the form of a dataframe with rownames
+data <- round(data) # round data since RSEM output may be non-integer
+
+colData <- clinMeta
+
+
+colData <- colData %>%  column_to_rownames(var="sampleID") #to make a dataframe with rownames
+colData <- colData[colnames(data),] #order the sample names the same as the expression data
+all( rownames(colData) == colnames(data))
+
+#colData[,c(2,4,5,6)] <- lapply(colData[,c(2,4,5,6)],as.factor) #adjust any columns with factor values
+#colData[,c(3,7,8)] <- lapply(colData[,c(3,7,8)],as.numeric) #similarly, make sure numerical values are properly labeled.
+
+
+library(biomaRt)
+ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="https://useast.ensembl.org")
+genemap <- getBM(attributes=c("entrezgene_id","ensembl_gene_id", "external_gene_name", "gene_biotype", "chromosome_name", "start_position", "end_position"), filters="ensembl_gene_id", 
+	values=rownames(data), mart=ensembl)
+genemap <- genemap[ duplicated(genemap$ensembl_gene_id) == F,]
+rownames(genemap) <- genemap$ensembl_gene_id
+
+
+## Remove lowly expressed genes
+
+library(edgeR)
+keep <- filterByExpr(data#, design=colData$below12 #we don't want to have design here, do we? Because if genes are not at all expressed in either category it will be filtered out?
+)
+data.filt <- data[keep,]
+
+
+## Keep only protein-coding and lncRNA genes
+genemap2 <- genemap[rownames(data.filt),]
+genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding","lncRNA"))
+data.filt <- data.filt[rownames(genemap2),]
+```
+
+
+```{r DE analyses childhood vs adolescence}
+## DE analyses
+res_dir <- "~/proj_Maryland_WGCNA/analysis/CC_DE_below12"
+
+
+library(limma)
+
+y <- DGEList(counts = data.filt, genes = genemap2, samples=SampleID)
+y <- calcNormFactors(y)
+
+design <- model.matrix(~ below12  + RIN_AMG + PMINTERVAL, data = colData)
+
+v <- voomWithQualityWeights(y, design, plot = TRUE)
+fit <- lmFit(v, design)
+fit <- eBayes(fit)
+summary(decideTests(fit, p.value=0.1))
+
+res <- topTable(fit, coef="below121", n=Inf, p.value=1)
+write.table(res, paste0(res_dir, "/de_limma_CC_below12.txt"), sep="\t", row.names=F)
 
 
 ```
