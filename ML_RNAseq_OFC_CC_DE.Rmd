@@ -16,6 +16,9 @@ library(tidyverse)
 library(edgeR)
 library(RColorBrewer)
 library(ggrepel)
+library(limma)
+library(magrittr)
+library(biomaRt)
 ```
 
 
@@ -65,7 +68,9 @@ info_CC <-
     select(-AGEYEARS, -AGEDAYS)
 
 info_OFC <- 
-  info_OFC %>% select(-CDEATHOFF) %>% 
+  info_OFC %>% 
+  mutate(sampleID = paste0(sampleID, "-OFC")) %>% 
+  select(-CDEATHOFF) %>% 
   dplyr::mutate(AGE = AGEYEARS + (AGEDAYS/365)) %>%
     select(-AGEYEARS, -AGEDAYS)
 
@@ -79,12 +84,22 @@ info_CC <-
   )
 
 info_CC$below12 <- as.factor(info_CC$below12)
+
+#do the same for OFC
+info_OFC <-
+  info_OFC %>% 
+  mutate(below12 = case_when(
+    AGE < 12  ~ 1,
+    TRUE ~ 0)
+  )
+
+info_OFC$below12 <- as.factor(info_OFC$below12)
 ```
 
 
 
 ```{r import counts CC}
-f = list.files("/Users/asbjorh/PhD/RNAseq_temporal/data/CC/Hughes-RNA6-2021-12-08/20_mapDataRSEM/",  pattern= ".genes.results$", full.names  = TRUE) #results from RSEM
+#f = list.files("/Users/asbjorh/PhD/RNAseq_temporal/data/CC/Hughes-RNA6-2021-12-08/20_mapDataRSEM/",  pattern= ".genes.results$", full.names  = TRUE) #results from RSEM
 
 f = list.files("/Users/asbjorh/PhD/RNAseq_temporal/data/CC/Hughes-RNA6-2021-12-08/40_countData/",  pattern= ".counts$", full.names  = TRUE) #results from 
 
@@ -145,11 +160,50 @@ d <-
 
 ```
 
-```{r Process data CC}
-library(magrittr)
-library(biomaRt)
+```{r import counts OFC}
+f = list.files("/Users/asbjorh/PhD/RNAseq_temporal/data/OFC/",  pattern= ".counts$", full.names  = TRUE) #results from 
 
+
+#if featurecounts results:
+dat = lapply(f, 
+             function(i){          #get the data from each sample
+  x = read_tsv(i, col_names = FALSE, skip = 2)
+  x = x[, c(1,6,7)] 
+  # add a column to say which file they're from
+  x$file = i
+  # Return your data
+  x
+}
+)
+
+
+d<-
+  do.call("rbind.data.frame", dat) #make a dataframe out of the imported datasets (combine by )
+
+
+d$file <- #remove unnescessary prefix text from sample names
+  str_remove(d$file, "/Users/asbjorh/PhD/RNAseq_temporal/data/OFC//") 
+
+d$file  <- #replace unnescessary suffix text from sample names
+  str_replace(d$file , ".counts", "-OFC") 
+
+
+d <- 
+  pivot_wider(dplyr::select(d, -X6), names_from= file, values_from = X7 ) 
+
+ count <- d %>% column_to_rownames(var="X1")
+
+ colnames(count) <- str_remove(colnames(count),  "-BA11")
+
+```
+
+
+
+
+```{r Process data}
 clinMeta <- info_CC
+clinMeta <- info_OFC
+
 count <- count
 
 SampleID <- colnames(count)[colnames(count) %in% clinMeta$sampleID] #make any other adjustments to which samples to include/ exclude here
@@ -192,11 +246,11 @@ data.filt <- data.filt[rownames(genemap2),]
 
 
 ```{r DE analyses childhood vs adolescence}
-## DE analyses
-res_dir <- "~/proj_Maryland_WGCNA/analysis/CC_DE_below12"
+analysis <- "CC_DE_below12"
+analysis <- "OFC_DE_below12"
 
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis)
 
-library(limma)
 
 y <- DGEList(counts = data.filt, genes = genemap2, samples=SampleID)
 y <- calcNormFactors(y)
@@ -209,8 +263,74 @@ fit <- eBayes(fit)
 summary(decideTests(fit, p.value=0.1))
 
 res <- topTable(fit, coef="below121", n=Inf, p.value=1)
-write.table(res, paste0(res_dir, "/de_limma_CC_below12.txt"), sep="\t", row.names=F)
+write.table(res, paste0(res_dir, "/de_limma_OFC_below12.txt"), sep="\t", row.names=F)
+```
 
+
+```{r plot DE genes}
+#in order to visualise expression, we need the samples as rows and gene expression + covariates as columns
+## Plot significant genes
+library(ggsci)
+library(ggpubr)
+
+col <- get_palette("aaas", 10)
+
+df <- cpm(y, log=TRUE, prior.count=3) #convert counts to normalised cpm
+df <- df[rownames(head(res,10)), ] #only keep the top 10 significant genes
+
+df <- df %>% t() %>% data.frame()     #have genes as columns
+colnames(df) <- head(res,10)$external_gene_name #use gene symbols in stead of ensembl codes
+df <- merge(df,colData.filt,by=0) 
+
+df <- df %>% rename("SampleID" = Row.names )
+
+
+#IA's plotting
+# glist <- lapply(2:11, function (x) {
+#   ggplot() + 
+#     geom_boxplot(data=df,aes(x = below12, y = df[,x]), color ="black",size=0.7, outlier.shape=NA, fill="white") +
+#     geom_point(data=df,aes(x = below12, y = df[,x], color = below12, fill=below12), position=position_jitterdodge(), pch=21,size=3.5, color="black", alpha=0.85) + 
+#     labs(title=colnames(df)[x],x="",y="") +
+#     scale_colour_manual(values=col[c(2,9,8)]) +
+#     scale_fill_manual(values=col[c(2,9,8)]) +
+#     theme_classic() +
+#     theme(axis.text.x=element_text(size=20,color="black", angle=0, hjust=0.5),
+#           axis.text.y=element_text(size=20,color="black"),
+#           axis.title=element_text(size=16),
+#           plot.title=element_text(size=20,hjust=0.5),
+#           legend.text=element_text(size=20),
+#           legend.title=element_blank(),
+#           plot.margin=unit(c(0,0,0,0),"cm"),
+#           panel.background=element_rect(linetype="solid", color="black", size=1)) 
+# })
+# 
+# 
+# annotate_figure(ggarrange(plotlist=glist,ncol=5,nrow=2,common.legend=T,legend="none"),
+#                 left=text_grob("Normalized expression",size=20,rot=90))
+# 
+
+#prepare for flexible plotting
+df_long <- 
+  df %>%  pivot_longer(cols = 2:11, names_to = "gene_id", values_to = "log_cpm") 
+
+df_long$below12 <- str_replace(df_long$below12, "1", "<12")
+df_long$below12 <- str_replace(df_long$below12, "0", ">12")
+
+df_long$below12 <- factor(df_long$below12, levels =  c("<12", ">12"))
+
+df_long <- df_long %>%  rename("Age_group" = below12)
+
+plot_expr <- df_long %>% ggplot(aes(x=Age_group, y= log_cpm)) + 
+    geom_boxplot( color ="black",size=0.7, outlier.shape=NA, fill="white") +
+    geom_point(aes( colour= Age_group, fill = Age_group), position= "jitter") +
+  facet_wrap(~gene_id, scales = "free_y") +
+      scale_colour_manual(values=col[c(1,6)]) +
+    scale_fill_manual(values=col[c(1,6)]) +
+  labs(title= paste0("Normalised expression, 10 significant DE genes, ", analysis)) +
+  theme_bw()
+
+ggsave(plot_expr, file = paste0(res_dir, "/plot_expr_top10sign.pdf" ))  
+  
 
 ```
 
@@ -296,7 +416,7 @@ library(ggpubr)
 
 col <- get_palette("aaas", 10)
 
-df <- cpm(y, log=TRUE, prior.count=3) %>% t %>% data.frame
+df <- cpm(y, log=TRUE, prior.count=3) #%>% t %>% data.frame
 df <- df[ , rownames(head(res,10)) ]
 colnames(df) <- head(res,10)$external_gene_name
 df <- merge(df,colData.filt,by=0) 
