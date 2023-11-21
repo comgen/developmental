@@ -19,6 +19,15 @@ library(ggrepel)
 library(limma)
 library(magrittr)
 library(biomaRt)
+theme_set(theme_bw()) #change default ggplot background
+theme_update(text= element_text(size = 7, family = "sans"))
+#fixing default function names
+select <- dplyr::select
+rename <- dplyr::rename
+filter <- dplyr::filter
+relocate <- dplyr::relocate
+colnames <- base::colnames
+rownames <- base::rownames
 ```
 
 
@@ -202,7 +211,7 @@ d <-
 
 ```{r Process data}
 clinMeta <- info_CC
-clinMeta <- info_OFC
+#clinMeta <- info_OFC
 
 count <- count
 
@@ -247,7 +256,7 @@ data.filt <- data.filt[rownames(genemap2),]
 
 ```{r DE analyses childhood vs adolescence}
 analysis <- "CC_DE_below12"
-analysis <- "OFC_DE_below12"
+#analysis <- "OFC_DE_below12"
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis)
 
@@ -274,6 +283,8 @@ library(ggsci)
 library(ggpubr)
 
 col <- get_palette("aaas", 10)
+colData.filt <- subset(colData, rownames(colData) %in% SampleID )
+
 
 df <- cpm(y, log=TRUE, prior.count=3) #convert counts to normalised cpm
 df <- df[rownames(head(res,10)), ] #only keep the top 10 significant genes
@@ -334,6 +345,33 @@ ggsave(plot_expr, file = paste0(res_dir, "/plot_expr_top10sign.pdf" ))
 
 ```
 
+
+```{r variance in age groups}
+library(rstatix)
+
+DE_genes_0.05 <- 
+  res %>% rownames_to_column(var = "gene_id") %>% filter(adj.P.Val < 0.05) %>% select(external_gene_name)
+
+df_long %>% 
+  select(SampleID, Age_group, gene_id, log_cpm) %>% 
+  group_by(Age_group, gene_id) %>% 
+  summarise(sd = sd(log_cpm)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x= Age_group, y= sd)) + geom_boxplot() + geom_jitter() #%>% 
+  #t_test(sd  ~ Age_group)
+  
+  
+
+```
+
+
+
+Questions:
+Higher variance in <12?
+Find pairs of switches (channel subunits etc). Plot their expression with age.
+Enrichment analysis with ClusterProfiler (remember to combine into fewer pathways)
+Enrichment for myelin-related genes in CC?
+DE genes overlap with BD/SCZ GWAS?
 
 
 
