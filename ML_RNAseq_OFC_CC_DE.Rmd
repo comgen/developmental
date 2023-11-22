@@ -38,21 +38,21 @@ This code is to import the Maryland data and produce normalised and filtered dat
 ### Add sample info
 
 ```{r add info}
-info_OFC <- 
+info_DFC <- 
   readxl::read_xlsx("/Users/asbjorh/PhD/ANK3_HTS-amplicons/Maryland/data/Maryland_Samples_NBB1582DonorInfo_cleaned.xlsx", sheet = 1, col_names = TRUE) %>% 
   dplyr::select(c("RNA ID", "AGEYEARS", "AGEDAYS", "RIN AMG", "RNAseq", "PMINTERVAL", "CDEATHOFF")) %>% filter(RNAseq!=0) %>% select(-RNAseq) %>% distinct()
 
 #simplify the names of samples to match data
-info_OFC$`RNA ID` <-  str_remove(info_OFC$`RNA ID`, "MD_")
-info_OFC$`RNA ID` <-  str_remove(info_OFC$`RNA ID`, "_RNA")
-info_OFC$`RNA ID` <-  str_replace(info_OFC$`RNA ID`, "_", "-")
-info_OFC <- dplyr::rename(info_OFC, sampleID="RNA ID")
+info_DFC$`RNA ID` <-  str_remove(info_DFC$`RNA ID`, "MD_")
+info_DFC$`RNA ID` <-  str_remove(info_DFC$`RNA ID`, "_RNA")
+info_DFC$`RNA ID` <-  str_replace(info_DFC$`RNA ID`, "_", "-")
+info_DFC <- dplyr::rename(info_DFC, sampleID="RNA ID")
 
-info_OFC <- info_OFC %>% filter(!(sampleID=="5162-BA11" & `RIN AMG`== 9.6)) #this sample has 2 entries, unknown which was used for RNAseq, remove best RIN, keep RIN = 9.1
+info_DFC <- info_DFC %>% filter(!(sampleID=="5162-BA11" & `RIN AMG`== 9.6)) #this sample has 2 entries, unknown which was used for RNAseq, remove best RIN, keep RIN = 9.1
 
-info_OFC <- dplyr::rename(info_OFC, RIN_AMG="RIN AMG")
+info_DFC <- dplyr::rename(info_DFC, RIN_AMG="RIN AMG")
 
-info_OFC$sampleID <- str_remove(info_OFC$sampleID,  "-BA11")
+info_DFC$sampleID <- str_remove(info_DFC$sampleID,  "-BA11")
 
 info_CC <-
 readxl::read_xlsx("~/proj_Maryland_WGCNA/data/RNAseq_CC samples_december_2021/sample_table_96_RNAseq_cleaned.xlsx", sheet = 1, col_names = TRUE)
@@ -65,7 +65,7 @@ info_CC <-
 info_CC$sampleID <- as.character(info_CC$sampleID)
 
 info_CC <- 
-  info_CC %>% left_join(select(info_OFC, -RIN_AMG), by= "sampleID")
+  info_CC %>% left_join(select(info_DFC, -RIN_AMG), by= "sampleID")
 
 
 #change age (years+days) into decimal years. Remove cause of death.
@@ -76,9 +76,9 @@ info_CC <-
   dplyr::mutate(AGE = AGEYEARS + (AGEDAYS/365)) %>%
     select(-AGEYEARS, -AGEDAYS)
 
-info_OFC <- 
-  info_OFC %>% 
-  mutate(sampleID = paste0(sampleID, "-OFC")) %>% 
+info_DFC <- 
+  info_DFC %>% 
+  mutate(sampleID = paste0(sampleID, "-DFC")) %>% 
   select(-CDEATHOFF) %>% 
   dplyr::mutate(AGE = AGEYEARS + (AGEDAYS/365)) %>%
     select(-AGEYEARS, -AGEDAYS)
@@ -94,15 +94,15 @@ info_CC <-
 
 info_CC$below12 <- as.factor(info_CC$below12)
 
-#do the same for OFC
-info_OFC <-
-  info_OFC %>% 
+#do the same for DFC
+info_DFC <-
+  info_DFC %>% 
   mutate(below12 = case_when(
     AGE < 12  ~ 1,
     TRUE ~ 0)
   )
 
-info_OFC$below12 <- as.factor(info_OFC$below12)
+info_DFC$below12 <- as.factor(info_DFC$below12)
 ```
 
 
@@ -169,7 +169,7 @@ d <-
 
 ```
 
-```{r import counts OFC}
+```{r import counts DFC}
 f = list.files("/Users/asbjorh/PhD/RNAseq_temporal/data/OFC/",  pattern= ".counts$", full.names  = TRUE) #results from 
 
 
@@ -210,8 +210,8 @@ d <-
 
 
 ```{r Process data}
-clinMeta <- info_CC
-#clinMeta <- info_OFC
+#clinMeta <- info_CC
+clinMeta <- info_DFC
 
 # exclude outlier CC_1259 sample
 exclude <- "1259-CC"
@@ -259,8 +259,8 @@ data.filt <- data.filt[rownames(genemap2),]
 
 
 ```{r DE analyses childhood vs adolescence}
-analysis <- "CC_DE_below12"
-#analysis <- "OFC_DE_below12"
+#analysis <- "CC_DE_below12"
+analysis <- "DFC_DE_below12"
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis)
 
@@ -276,7 +276,7 @@ fit <- eBayes(fit)
 summary(decideTests(fit, p.value=0.1))
 
 res <- topTable(fit, coef="below121", n=Inf, p.value=1)
-write.table(res, paste0(res_dir, "/de_limma_OFC_below12.txt"), sep="\t", row.names=F)
+write.table(res, paste0(res_dir, "/de_limma_DFC_below12.txt"), sep="\t", row.names=F)
 ```
 
 
@@ -344,7 +344,7 @@ plot_expr <- df_long %>% ggplot(aes(x=Age_group, y= log_cpm)) +
   labs(title= paste0("Normalised expression, 10 significant DE genes, ", analysis)) +
   theme_bw()
 
-ggsave(plot_expr, file = paste0(res_dir, "/plot_expr_top10sign.pdf" ))  
+#ggsave(plot_expr, file = paste0(res_dir, "/plot_expr_top10sign.pdf" ))  
   
 
 ```
@@ -363,8 +363,8 @@ df_long %>%
   group_by(Age_group, gene_id) %>% 
   summarise(sd = sd(log_cpm)) %>% 
   ungroup() %>% 
-  ggplot(aes(x= Age_group, y= sd)) + geom_boxplot() + geom_jitter() #%>% 
-  #t_test(sd  ~ Age_group)
+  #ggplot(aes(x= Age_group, y= sd)) + geom_boxplot() + geom_jitter() #%>% 
+  t_test(sd  ~ Age_group)
  
 #interesting trend. Should we look for genes with high difference in variance? 
 cpm_all <- cpm(y, log=TRUE, prior.count=3) #convert counts to normalised cpm
@@ -415,8 +415,8 @@ genes_sd_diff <-
   #labs(title= paste0("Normalised expression, 20 genes with high differense in SD, ", analysis)) +
   theme_bw()
 
-  #it is clear that the largest difference in sd is due to 1 outlier sample in many cases, and it is not the AGE<2 samples
-  
+  #For CC, it is clear that the largest difference in sd is due to 1 outlier sample in many cases, and it is not the AGE<2 samples
+  #For DFC, there are more samples contributing to high sd.
 
 
 ```
@@ -434,10 +434,10 @@ genes_sd_diff <-
 #HTR1A/ HTR5A
 
   cpm_all_long %>% 
- #   filter(gene_id %in% c("GRIN2A", "GRIN2B")) %>% 
+    filter(gene_id %in% c("GRIN2A", "GRIN2B")) %>% 
 #      filter(gene_id %in% c("GLRA2", "GLRA3")) %>% 
 #        filter(gene_id %in% c("HTR1A", "HTR5A")) %>% 
-  filter(gene_id %in% c("GABRA3", "GABRA6")) %>% 
+#  filter(gene_id %in% c("GABRA3", "GABRA6")) %>% 
     ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
   geom_point()+
   geom_smooth(se = FALSE) +
