@@ -213,7 +213,11 @@ d <-
 clinMeta <- info_CC
 #clinMeta <- info_OFC
 
+# exclude outlier CC_1259 sample
+exclude <- "1259-CC"
 count <- count
+
+ count <- count[, !colnames(count) %in% exclude] 
 
 SampleID <- colnames(count)[colnames(count) %in% clinMeta$sampleID] #make any other adjustments to which samples to include/ exclude here
 
@@ -236,7 +240,7 @@ ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="https://use
 genemap <- getBM(attributes=c("entrezgene_id","ensembl_gene_id", "external_gene_name", "gene_biotype", "chromosome_name", "start_position", "end_position"), filters="ensembl_gene_id", 
 	values=rownames(data), mart=ensembl)
 genemap <- genemap[ duplicated(genemap$ensembl_gene_id) == F,]
-rownames(genemap) <- genemap$ensembl_gene_id
+rownames(genemap) <- genemap$ensembl_gene_id #rownames in case dataframe is needed
 
 
 ## Remove lowly expressed genes
@@ -352,6 +356,8 @@ library(rstatix)
 DE_genes_0.05 <- 
   res %>% rownames_to_column(var = "gene_id") %>% filter(adj.P.Val < 0.05) %>% select(external_gene_name)
 
+#look at 10 most significant genes
+
 df_long %>% 
   select(SampleID, Age_group, gene_id, log_cpm) %>% 
   group_by(Age_group, gene_id) %>% 
@@ -359,11 +365,217 @@ df_long %>%
   ungroup() %>% 
   ggplot(aes(x= Age_group, y= sd)) + geom_boxplot() + geom_jitter() #%>% 
   #t_test(sd  ~ Age_group)
+ 
+#interesting trend. Should we look for genes with high difference in variance? 
+cpm_all <- cpm(y, log=TRUE, prior.count=3) #convert counts to normalised cpm
+
+cpm_all <- cpm_all %>% t() %>% data.frame()     #have genes as columns
+cpm_all_long <- 
+  cpm_all %>%  rownames_to_column(var = "SampleID") %>% 
+  pivot_longer(cols = -1, names_to = "ensembl_gene_id", values_to = "log_cpm")
+
+#change gene name to symbol
+cpm_all_long <- 
+  cpm_all_long %>% 
+  left_join(select(res, ensembl_gene_id, external_gene_name) , by=c("ensembl_gene_id"))  #add in symbol name
+
+cpm_all_long <- 
+  cpm_all_long %>% rename("gene_id" = external_gene_name)
+
+cpm_all_long <- 
+  cpm_all_long %>% 
+  left_join(rownames_to_column(colData.filt, var= "SampleID"), by="SampleID")
+
+cpm_all_long$below12 <- str_replace(cpm_all_long$below12, "1", "<12")
+cpm_all_long$below12 <- str_replace(cpm_all_long$below12, "0", ">12")
+cpm_all_long$below12 <- factor(cpm_all_long$below12, levels =  c("<12", ">12"))
+cpm_all_long <- cpm_all_long %>%  rename("Age_group" = below12)
+
+genes_sd_diff <- 
+  cpm_all_long %>% 
+  select(SampleID, Age_group, gene_id, log_cpm) %>% 
+  group_by(Age_group, gene_id) %>% 
+  summarise(sd = sd(log_cpm)) %>% 
+  ungroup() %>% 
+  pivot_wider(id_cols = gene_id, names_from = Age_group, values_from = sd) %>% 
+  mutate(sd_diff = `<12` - `>12`) %>% 
+  arrange(desc(sd_diff)) %>% 
+  head(n= 20) %>% 
+  select(gene_id)
+
+#plot_expr <- 
+  cpm_all_long %>% 
+    filter(gene_id %in% genes_sd_diff$gene_id) %>% 
+    ggplot(aes(x=Age_group, y= log_cpm)) + 
+    geom_boxplot(  outlier.shape=NA, fill="white") +
+    geom_point(aes( colour = AGE), position= "jitter") +
+  facet_wrap(~gene_id, scales = "free_y") +
+ #     scale_colour_manual(values=col[c(1,6)]) +
+ #   scale_fill_manual(values=col[c(1,6)]) +
+  #labs(title= paste0("Normalised expression, 20 genes with high differense in SD, ", analysis)) +
+  theme_bw()
+
+  #it is clear that the largest difference in sd is due to 1 outlier sample in many cases, and it is not the AGE<2 samples
   
-  
+
 
 ```
 
+```{r pairs of switches}
+#Kang et al
+#IGF2 in fig 2c
+#DCX in fig 5d
+
+
+#Bar-Shira et al's selection:
+#GRIN2A/GRIN2B #mostly embryonic
+#GABRA3/ GABRA6
+#GLRA2/GLRA3
+#HTR1A/ HTR5A
+
+  cpm_all_long %>% 
+ #   filter(gene_id %in% c("GRIN2A", "GRIN2B")) %>% 
+#      filter(gene_id %in% c("GLRA2", "GLRA3")) %>% 
+#        filter(gene_id %in% c("HTR1A", "HTR5A")) %>% 
+  filter(gene_id %in% c("GABRA3", "GABRA6")) %>% 
+    ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+  geom_point()+
+  geom_smooth(se = FALSE) +
+        scale_colour_manual(values=col[c(1,6)])
+
+
+```
+
+
+```{r find our own switch pairs}
+#Bar-Shira et al 2015 call these potential switch pairs "condition-dependent variants" or CDVs
+
+# Specifically, we used the KEGG
+# pathways repository [2] to focus on proteins that participate in synaptic pathways, including
+# signal transduction pathways of all neurotransmitters (a total of 17 KEGG pathways). We then
+# used KEGG to define subgroups of functionally-related proteins which are likely to contain
+# CDVs (see Methods). Then, we calculated the similarity of the two amino-acid sequences of
+# each candidate pair, and kept pairs with sequence similarity above 30% (see Methods). Low
+# sequence similarity is usually associated with different functionality and dissimilar protein
+# sequences can be excluded from consideration [40]
+
+library(KEGGREST)
+library(org.Hs.eg.db)
+
+#the following KEGG codes are linked to neuronal functions, neurodegenerative disorders and substance dependence. They are taken from Table2 in Bar-Shira et al 2015. 
+neuronal_KEGG <- c(
+  "path:hsa04020",
+  "path:hsa04724",
+  "path:hsa04725",
+  "path:hsa04726",
+  "path:hsa04727",
+  "path:hsa04728",
+  "path:hsa04730",
+  "path:hsa05010",
+  "path:hsa05012",
+  "path:hsa05014",
+  "path:hsa05016",
+  "path:hsa05030",
+  "path:hsa05031",
+  "path:hsa05032",
+  "path:hsa05033",
+  "path:hsa05034",
+    "path:hsa04080"
+)
+
+#get the entrez ID from genes that are in these KEGG pathways
+hsa_path_eg  <- 
+  keggLink(target = "hsa", source = neuronal_KEGG) %>%
+  tibble(gene = ., KEGG_pathway = sub("hsa:", "", names(.))) %>% 
+   separate_wider_delim(gene, delim = ":", names = c(NA, "entrezgene_id")) %>% 
+  mutate(KEGG_pathway= str_replace_all(hsa_path_eg$KEGG_pathway, "path:hsa", "")) 
+
+#entrez stored as numbers by default. Need character. 
+genemap2$entrezgene_id <- as.character(genemap2$entrezgene_id) 
+
+#get more gene info. genemap2 is already reduced to protein-coding and lncRNA
+hsa_path_eg <- 
+  hsa_path_eg %>% 
+  left_join(select(tibble(genemap2), entrezgene_id, ensembl_gene_id, external_gene_name), by= "entrezgene_id") %>% 
+  tidyr::drop_na()
+
+#of neuro-KEGG genes, find paralogs
+paralogs_neuro <- getBM(
+  attributes = c( "ensembl_gene_id", "external_gene_name", "hsapiens_paralog_ensembl_gene", "hsapiens_paralog_associated_gene_name" , "hsapiens_paralog_perc_id"), 
+  mart= ensembl, 
+  filters = "external_gene_name", 
+  values = hsa_path_eg$external_gene_name)
+
+paralogs_neuro <-
+  paralogs_neuro %>% tidyr::drop_na()
+
+#Bar-Shira et al used 30% sequence similarity as cut-off for possible CDVs
+paralogs_neuro_sim <-
+  paralogs_neuro %>%
+  filter(hsapiens_paralog_perc_id>= 30) 
+#this is gene similarity, while the paper used "protein pairs with amino acid sequence similarity lower than 30%";
+# Protein sequences were aligned using the Needleman-Wunsch global algorithm. Following the
+# definition used for global alignment in BLAST 2 Sequences [78] we used blosum62 as the scoring
+# matrix, and set the gap costs to 11 for gap existence and 1 for each extension. The sequence
+# similarity was defined as the fraction of identical residues out of the number of residues in the
+# longer sequence.
+
+#Quantify dissimilarity between expression profiles
+#the Spearman correlation between the expression profiles of each pair of genes. Analysis was limited to differentially expressed genes, by excluding genes whose expression range (maximum–minimum) was lower than 1.5 in log2 scale
+
+#find genes that does not vary much over time, and exclude them from analysis
+genes_range1.5<- 
+  cpm_all_long %>% 
+  select(SampleID, log_cpm, gene_id) %>% 
+  group_by(gene_id) %>% 
+  mutate(max= max(log_cpm), min= min(log_cpm)) %>% 
+  mutate(range= max-min) %>% ungroup() %>% 
+  select(gene_id, range) %>% distinct() %>%  
+  filter(range>1.5) %>% 
+  select(gene_id)
+
+paralogs_neuro_sim <- 
+  filter(paralogs_neuro_sim, external_gene_name %in% genes_range1.5$gene_id)
+
+#Simple method: find pearson correlation of pairs, and look for negatively correlated expression
+
+cor <- cpm_all %>% 
+  dplyr::select(colnames(cpm_all)[colnames(cpm_all) %in% paralogs_neuro_sim$ensembl_gene_id] | colnames(cpm_all)[colnames(cpm_all) %in% paralogs_neuro_sim$hsapiens_paralog_ensembl_gene] ) %>% 
+  cor()                    # get all correlations of neuronal genes with paralogs or that are paralogs of these 
+  
+
+cor[lower.tri(cor)] <- NA #removes the reverse correlation
+
+cor_paralogs_neuro_sim <- 
+  cor %>% 
+ data.frame() %>%           # save result as a dataframe
+  mutate(v1 = row.names(.)) %>%  # add row names as a column
+  pivot_longer(cols = -v1, names_to = "v2", values_to = "cor") %>%        # reshape data
+  filter(v1 != v2) %>%    # keep pairs that v1 matches v2, but are not the same
+  drop_na() #remove the reverse correlations
+
+#find the gene pairs mostly negatively correlated
+neg_corr <- cor_paralogs_neuro_sim %>% 
+  arrange(cor) %>% 
+  head(n=10)
+
+#visualise gene expression of negatively correlated pairs
+  cpm_all_long %>% 
+     mutate(pair = case_when(
+    ensembl_gene_id  %in% neg_corr[1,] ~ "1",
+    ensembl_gene_id  %in% neg_corr[2,] ~ "2",
+    ensembl_gene_id  %in% neg_corr[3,] ~ "3",
+    ensembl_gene_id  %in% neg_corr[4,] ~ "4",
+    TRUE ~ NA)) %>% 
+    drop_na %>%
+    ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+  geom_point()+ 
+    facet_wrap(~pair, scales = "free_y") +
+  geom_smooth(se = FALSE) +
+        scale_colour_manual(values=col) 
+  
+  
+```
 
 
 Questions:
@@ -374,108 +586,3 @@ Enrichment for myelin-related genes in CC?
 DE genes overlap with BD/SCZ GWAS?
 
 
-
-##################### BRAIN-GVEX #####################
-
-## Process data
-library(magrittr)
-
-path <- "/Users/ibrahiaa/rnaseq_brain_data_sets/PsychENCODE/asbjørn_si_score/DE_OFC_5sets_TSD/"
-
-clinMeta <- read.csv(paste0(path," info_GVEX.txt"), sep="\t", header=T)
-count <- read.csv(paste0(path," count_GVEX.txt"), sep=",", header=T, check.names=F)
-colnames(count)[1] <- "gene_id"
-
-id <- subset(clinMeta, Study=="SMRI" & PrimaryDiagnosis %in% c("BD","HC") & Ethnicity =="CAUC")$SampleID %>% unique
-data <- count[,c("gene_id",id)]
-
-data$gene_id <- gsub("\\..*","",data$gene_id)
-data <- data[ duplicated(data$gene_id) == F,]
-rownames(data) <- data$gene_id
-data <- data[,-1]
-#data <- round(data) # round data since RSEM output may be non-integer
-
-colData <- clinMeta
-rownames(colData) <- colData$SampleID
-colData <- colData[colnames(data),]
-all( rownames(colData) == colnames(data))
-colData[,c(2,4,5,6)] <- lapply(colData[,c(2,4,5,6)],as.factor)
-colData[,c(3,7,8)] <- lapply(colData[,c(3,7,8)],as.numeric)
-colData$PrimaryDiagnosis <- relevel(colData$PrimaryDiagnosis, ref="HC")
-
-colData.filt <- subset(colData, SampleID %in% id)
-
-data <- data[,rownames(colData.filt)]
-all( rownames(colData.filt) == colnames(data))
-
-
-library(biomaRt)
-ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="useast.ensembl.org")
-genemap <- getBM(attributes=c("entrezgene_id","ensembl_gene_id", "external_gene_name", "gene_biotype", "chromosome_name", "start_position", "end_position"), filters="ensembl_gene_id", 
-	values=rownames(data), mart=ensembl)
-genemap <- genemap[ duplicated(genemap$ensembl_gene_id) == F,]
-rownames(genemap) <- genemap$ensembl_gene_id
-
-
-## Remove lowly expressed genes
-
-library(edgeR)
-keep <- filterByExpr(data, design=colData.filt$PrimaryDiagnosis)
-data.filt <- data[keep,]
-
-
-## Keep only protein-coding and lncRNA genes
-genemap2 <- genemap[rownames(data.filt),]
-genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding","lncRNA"))
-data.filt <- data.filt[rownames(genemap2),]
-
-
-## DE analyses
-
-library(limma)
-
-y <- DGEList(counts = data.filt, genes = genemap2, samples=colData.filt)
-y <- calcNormFactors(y)
-
-design <- model.matrix(~ PrimaryDiagnosis + ReportedGender + Age + RIN + PMI, data = colData.filt)
-
-v <- voomWithQualityWeights(y, design, plot = TRUE)
-fit <- lmFit(v, design)
-fit <- eBayes(fit)
-summary(decideTests(fit, p.value=0.1))
-
-res <- topTable(fit, coef="PrimaryDiagnosisBD", n=Inf, p.value=1)
-write.table(res, "/Users/ibrahiaa/rnaseq_brain_data_sets/PsychENCODE/asbjørn_si_score/de_limma_gvex_smri.txt", sep="\t", row.names=F)
-
-
-## Plot significant genes
-library(ggsci)
-library(ggpubr)
-
-col <- get_palette("aaas", 10)
-
-df <- cpm(y, log=TRUE, prior.count=3) #%>% t %>% data.frame
-df <- df[ , rownames(head(res,10)) ]
-colnames(df) <- head(res,10)$external_gene_name
-df <- merge(df,colData.filt,by=0) 
-
-glist <- lapply(2:11, function (x) {
-  ggplot() + 
-    geom_boxplot(data=df,aes(x = PrimaryDiagnosis, y = df[,x]), color ="black",size=0.7, outlier.shape=NA, fill="white") +
-    geom_point(data=df,aes(x = PrimaryDiagnosis, y = df[,x], color = PrimaryDiagnosis, fill=PrimaryDiagnosis), position=position_jitterdodge(), pch=21,size=3.5, color="black", alpha=0.85) + 
-    labs(title=colnames(df)[x],x="",y="") +
-    scale_colour_manual(values=col[c(2,9,8)]) +
-    scale_fill_manual(values=col[c(2,9,8)]) +
-    theme_classic() +
-    theme(axis.text.x=element_text(size=20,color="black", angle=0, hjust=0.5),
-          axis.text.y=element_text(size=20,color="black"),
-          axis.title=element_text(size=16),
-          plot.title=element_text(size=20,hjust=0.5),
-          legend.text=element_text(size=20),
-          legend.title=element_blank(),
-          plot.margin=unit(c(0,0,0,0),"cm"),
-          panel.background=element_rect(linetype="solid", color="black", size=1)) 
-})
-
-annotate_figure(ggarrange(plotlist=glist,ncol=5,nrow=2,common.legend=T,legend="none"),
-                left=text_grob("Normalized expression",size=20,rot=90))
