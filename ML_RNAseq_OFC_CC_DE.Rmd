@@ -154,6 +154,7 @@ d <-
 
  count <- d %>% column_to_rownames(var="X1")
 
+ count_CC <- count
 
 
 #if using RSEM data
@@ -203,6 +204,8 @@ d <-
  count <- d %>% column_to_rownames(var="X1")
 
  colnames(count) <- str_remove(colnames(count),  "-BA11")
+ 
+ count_DFC <- count
 
 ```
 
@@ -212,6 +215,9 @@ d <-
 ```{r Process data}
 #clinMeta <- info_CC
 clinMeta <- info_DFC
+
+#count <- count_CC
+count <- count_DFC
 
 # exclude outlier CC_1259 sample
 exclude <- "1259-CC"
@@ -257,6 +263,21 @@ genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding","lncRNA"))
 data.filt <- data.filt[rownames(genemap2),]
 ```
 
+```{r normalise with Deseq2, eval=FALSE}
+
+dds <- DESeqDataSetFromMatrix(countData=data.filt, colData=colData, design=~below12)
+dds <- DESeq(dds)
+
+vsd <- vst(dds, blind=FALSE)
+
+cpm_deseq2 <- fpm(dds, robust = TRUE)
+cpm_log_deseq2 <- log2(cpm_deseq2 + 0.1)
+
+```
+
+
+
+
 
 ```{r DE analyses childhood vs adolescence}
 #analysis <- "CC_DE_below12"
@@ -266,7 +287,7 @@ res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis)
 
 
 y <- DGEList(counts = data.filt, genes = genemap2, samples=SampleID)
-y <- calcNormFactors(y)
+y <- calcNormFactors(y) #normLibSizes is the new name for calcNormFactors
 
 design <- model.matrix(~ below12  + RIN_AMG + PMINTERVAL, data = colData)
 
@@ -278,6 +299,47 @@ summary(decideTests(fit, p.value=0.1))
 res <- topTable(fit, coef="below121", n=Inf, p.value=1)
 #write.table(res, paste0(res_dir, "/de_limma_DFC_below12.txt"), sep="\t", row.names=F)
 ```
+
+```{r DE analyses DFC vs CC}
+#analysis <- "CC_DE_below12"
+analysis <- "DFC_CC_DE"
+
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis)
+
+counts_all <- 
+  bind_cols(count_CC, count_DFC)
+
+counts_all <- na.omit(counts_all)
+
+colData_all <-  bind_rows("DFC"=info_DFC,
+                          "CC"= select(info_CC, -CDEATHOFF),
+                          .id = "region")
+ 
+colData_all <- colData_all %>% filter(sampleID != exclude) 
+
+sample_all <-  colnames(counts_all)[colnames(counts_all) %in% colData_all$sampleID]
+
+keep <- filterByExpr(counts_all
+)
+counts_all.filt <- counts_all[keep,]
+counts_all.filt <- counts_all.filt[rownames(counts_all.filt) %in% rownames(genemap2), colnames(counts_all.filt) != exclude]
+
+genemap2 <- genemap2[rownames(counts_all.filt),]
+
+y <- DGEList(counts = counts_all.filt, genes = genemap2, samples=sample_all)
+y <- calcNormFactors(y) #normLibSizes is the new name for calcNormFactors
+
+design <- model.matrix(~ region  + RIN_AMG + PMINTERVAL, data = colData_all)
+
+v <- voomWithQualityWeights(y, design, plot = TRUE)
+fit <- lmFit(v, design)
+fit <- eBayes(fit)
+summary(decideTests(fit, p.value=0.1))
+
+res_region <- topTable(fit, coef="regionDFC", n=Inf, p.value=1)
+#write.table(res, paste0(res_dir, "/de_limma_DFC_below12.txt"), sep="\t", row.names=F)
+```
+
 
 
 ```{r plot DE genes}
@@ -377,7 +439,7 @@ cpm_all_long <-
 #change gene name to symbol
 cpm_all_long <- 
   cpm_all_long %>% 
-  left_join(select(res, ensembl_gene_id, external_gene_name) , by=c("ensembl_gene_id"))  #add in symbol name
+  left_join(select(genemap2, ensembl_gene_id, external_gene_name) , by=c("ensembl_gene_id"))  #add in symbol name
 
 cpm_all_long <- 
   cpm_all_long %>% rename("gene_id" = external_gene_name)
@@ -508,6 +570,13 @@ paralogs_neuro <- getBM(
   filters = "external_gene_name", 
   values = hsa_path_eg$external_gene_name)
 
+#find any paralog pairs
+paralogs <- getBM(
+  attributes = c(  "ensembl_gene_id", "external_gene_name",  "hsapiens_paralog_ensembl_gene", "hsapiens_paralog_associated_gene_name" , "hsapiens_paralog_perc_id"), 
+  mart= ensembl, 
+  filters = "ensembl_gene_id", 
+  values = genemap2$ensembl_gene_id)
+
 paralogs_neuro <-
   paralogs_neuro %>% tidyr::drop_na()
 
@@ -622,6 +691,13 @@ neg_corr_membrane <- cor_paralogs_neuro_sim %>%
 ```
 
 ```{r correlation residuals and levels}
+library(corrplot)
+library(directlabels)
+library(rstatix)
+
+#cpm_all_long <- cpm_all_long %>% 
+ # left_join(info_DFC, by=c("SampleID"= "sampleID"))
+
 gene <- "KCNQ5"
 
 test_gene <- cpm_all_long %>%
@@ -638,8 +714,8 @@ geom_point() +
 geom_smooth(method = lm, formula = y ~ poly(x, 3), se = FALSE)
 
 
-# 1. get trendline, i.e. splines model
-ns_mod <- lm(log_cpm ~ splines::ns(AGE, knots = 5), data= test_gene) 
+# 1. get trendline, i.e. splines model and 3rd-degree polynomial
+#ns_mod <- lm(log_cpm ~ splines::ns(AGE, knots = 5), data= test_gene) 
 poly_mod <- lm(log_cpm ~ poly(AGE, 3), data= test_gene)
 
 #plot with trendline
@@ -660,6 +736,9 @@ lines(sort(test_gene$AGE),                 # Draw polynomial regression curve
 cor_subset <- cpm_all %>% 
   dplyr::select(colnames(cpm_all)[colnames(cpm_all) %in% paralogs_neuro_sim$ensembl_gene_id] | colnames(cpm_all)[colnames(cpm_all) %in% paralogs_neuro_sim$hsapiens_paralog_ensembl_gene] ) 
 
+#try a new subset: 1000 random genes
+cor_subset <- sample(cpm_all, 1000)
+
 M = cor(cor_subset)
 M[lower.tri(M)] <- NA #removes the reverse correlation
 
@@ -668,6 +747,7 @@ testMexpr[lower.tri(testMexpr)] <- NA #removes the reverse correlation
 
 res_poly_all <- list()
 models_poly_all <- list() 
+poly_coeff_pvalue <- list()
 
 for(gene in colnames(cor_subset)){
 test_gene <- cpm_all_long %>%
@@ -680,11 +760,15 @@ names(res_poly) <- test_gene$SampleID
 
 res_poly_all[[gene]] <- res_poly
 models_poly_all[[gene]] <- poly_mod
+poly_coeff_pvalue[[gene]] <- summary(poly_mod)$coefficients[,4]
 }
 
 res_poly_all_df <-  do.call("rbind", res_poly_all)
+poly_coeff_pvalue_df <- do.call("rbind", poly_coeff_pvalue)
 
-
+poly_coeff_pvalue_df <-
+  base::as.data.frame(poly_coeff_pvalue_df) %>% 
+  rownames_to_column(var = "ensembl_gene_id")
 
 # 3. find correlation value and p for each pairs of expression
 
@@ -695,7 +779,7 @@ testMexpr$p[lower.tri(testMexpr$p)] <- NA #removes the reverse correlation
 testMexpr_p <- as.data.frame(testMexpr$p)
 
 # 4. find correlation value and p for each pairs of residuals
-library(corrplot)
+#library(corrplot)
 M_res = cor(t(res_poly_all_df))
 M_res[lower.tri(M_res)] <- NA #removes the reverse correlation
 testMres = cor.mtest(t(res_poly_all_df), conf.level = 0.95)
@@ -747,7 +831,12 @@ corr_res_expr <-
   left_join(select(genemap2, ensembl_gene_id, external_gene_name), by= c("geneX"= "ensembl_gene_id" )) %>% rename("gene_name_X" = external_gene_name) %>% 
     left_join(select(genemap2, ensembl_gene_id, external_gene_name), by= c("geneY"= "ensembl_gene_id" )) %>% rename("gene_name_Y" = external_gene_name)
 
-p_thr = 0.05
+#adjust p-values for multiple testing (FDR)
+corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_res", output.col = "p_res_adj", method = "fdr")
+corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_expr", output.col = "p_expr_adj", method = "fdr")
+
+p_thr = 0.01
+cor_thr = 0.5
 
 #categorise whether significant in both expr and res
 corr_res_expr_cat <- corr_res_expr %>% 
@@ -764,55 +853,452 @@ corr_res_expr_cat <- corr_res_expr %>%
          )
   )
 
-#order the categories
-corr_res_expr_cat$cat <- factor(corr_res_expr_cat$cat, levels = c("neg_expr_neg_res", "notsign_expr_neg_res", "pos_expr_neg_res",
-                                                      "neg_expr_notsign_res", "notsign_expr_notsign_res", "pos_expr_notsign_res",
-                                                      "neg_expr_pos_res", "notsign_expr_pos_res", "pos_expr_pos_res"))
+#categorise whether significant in both expr and res: FDR-adjusted p-values
+corr_res_expr_cat <- corr_res_expr %>% 
+  mutate(cat= case_when(
+    corr_expr > 0 & corr_res > 0 & p_expr_adj < p_thr & p_res_adj < p_thr  ~ "pos_expr_pos_res",
+    corr_expr < 0 & corr_res < 0 & p_expr_adj < p_thr & p_res_adj < p_thr  ~ "neg_expr_neg_res",
+    corr_expr > 0 & corr_res < 0 & p_expr_adj < p_thr & p_res_adj < p_thr  ~ "pos_expr_neg_res",
+    corr_expr < 0 & corr_res > 0 & p_expr_adj < p_thr & p_res_adj < p_thr  ~ "neg_expr_pos_res",
+     p_expr_adj > p_thr & p_res_adj > p_thr  ~ "notsign_expr_notsign_res",
+    corr_expr > 0  & p_expr_adj < p_thr & p_res_adj > p_thr  ~ "pos_expr_notsign_res",
+    corr_expr < 0  & p_expr_adj < p_thr & p_res_adj > p_thr  ~ "neg_expr_notsign_res",
+    corr_res > 0  & p_expr_adj > p_thr & p_res_adj < p_thr  ~ "notsign_expr_pos_res",
+    corr_res < 0  & p_expr_adj > p_thr & p_res_adj < p_thr  ~ "notsign_expr_neg_res",
+         )
+  )
 
+#order the categories
+
+corr_res_expr_cat$cat <- factor(corr_res_expr_cat$cat, 
+                                levels = c("neg_expr_pos_res", "notsign_expr_pos_res", "pos_expr_pos_res",
+                                           "neg_expr_notsign_res", "notsign_expr_notsign_res",  "pos_expr_notsign_res",
+                                           "neg_expr_neg_res", "notsign_expr_neg_res", "pos_expr_neg_res" ))
 
 #Create count data for labels
-Labels <- corr_res_expr_cat %>% group_by(cat, .drop=FALSE) %>% summarise(N=paste0('n: ',n()))
+Labels <- corr_res_expr_cat %>% group_by(cat, .drop=FALSE) %>% summarise(N=paste0('n: ',n(), ",\n", round(digits = 3, n()/length(corr_res_expr_cat$geneX))*100, "%"))
 #X position
 Labels$corr_expr <- 0.5
 
 #visualise 
 corr_res_expr_cat %>% 
+  pivot_longer(cols= c(corr_expr, corr_res), names_to = "cor_source", values_to = "cor") %>% 
   ggplot(aes(x=corr_expr, 
              stat = "count",fill=as.factor(cat))) + 
-  geom_freqpoly() + geom_freqpoly(aes(x= corr_res), colour= "red") +
+  geom_freqpoly(aes(x= cor, colour= cor_source, linetype= cor_source)) +
   geom_text(data = Labels, aes(x=corr_expr,y=30000,label=N)) +
-  facet_wrap(~cat, nrow = 3, ncol = 3, drop = FALSE)  
+  facet_wrap(~cat, nrow = 3, ncol = 3, drop = FALSE)  +
+  scale_colour_manual(values = c(corr_expr= "black", corr_res="blue") )+
+  scale_linetype_manual(values  = c(corr_expr= 1, corr_res= 2)) +
+  theme(text = 
+        element_text(size=10) ) +
+  ylab("count: gene pairs")
+  
+#2D plot of the 2 correlation measures' p-values
+#transform p-value on a log scale, sign according to positive or nefgative correlation
+corr_res_expr_cat <- corr_res_expr_cat %>% 
+  mutate(log_p_expr_cor= -log(p_expr) * sign(corr_expr )) %>% 
+  mutate(log_p_res_cor= -log(p_res) * sign(corr_res ))
+
+heatColours <- c("darkblue", "blue", "cyan", "red", "orange", "gold", "yellow" )
+
+corr_res_expr_cat %>% 
+ggplot() + 
+  geom_bin2d(aes(log_p_expr_cor, log_p_res_cor), binwidth= c(1,1)) +
+  scale_fill_gradientn(
+    colours = heatColours, trans="log10"
+    ) #+
+  facet_wrap(~cat, nrow = 3, ncol = 3, drop = FALSE)
+  
+
+corr_res_expr_cat %>% 
+  pivot_longer(cols= c(corr_expr, corr_res), names_to = "cor_source", values_to = "cor") 
+
+  
+plotlist <- list()
+
+for(c in c("neg_expr_neg_res", "pos_expr_pos_res", "neg_expr_notsign_res", "neg_expr_notsign_res", "notsign_expr_neg_res")){
+    
+  
+corr_res_expr_vis <- 
+  corr_res_expr_cat %>%  
+  filter(cat==c) %>% 
+  filter(geneX %in% time_trend_genes$ensembl_gene_id & geneY %in% time_trend_genes$ensembl_gene_id) %>% 
+   group_by(geneX) %>%   dplyr::slice(which.max(abs(corr_res))) %>% ungroup() %>% #make sure only each gene is only part of pair once
+   group_by(geneY) %>%   dplyr::slice(which.max(abs(corr_res))) %>% ungroup() %>% #make sure only each gene is only part of pair once
+  arrange(corr_res) 
 
 
 
-
-#negative correlation
-neg_corr_res_expr <- corr_res_expr_cat %>%  filter(cat== "neg_expr_neg_res") %>% arrange(p_expr)
 
 #visualise examples
   #visualise gene expression of negatively correlated pairs
-  cpm_all_long %>% 
+ visualise_expr <-  cpm_all_long %>% 
      mutate(pair = case_when(
-    ensembl_gene_id  %in% neg_corr_res_expr[1, 1:2] ~ "1",
-    ensembl_gene_id  %in% neg_corr_res_expr[2, 1:2] ~ "2",
-    ensembl_gene_id  %in% neg_corr_res_expr[3, 1:2] ~ "3",
-    ensembl_gene_id  %in% neg_corr_res_expr[4, 1:2] ~ "4",
+    ensembl_gene_id  %in% corr_res_expr_vis[1, 1:2] ~ "1",
+    ensembl_gene_id  %in% corr_res_expr_vis[2, 1:2] ~ "2",
+    ensembl_gene_id  %in% corr_res_expr_vis[3, 1:2] ~ "3",
+    ensembl_gene_id  %in% corr_res_expr_vis[4, 1:2] ~ "4",
     TRUE ~ NA)) %>% 
-    drop_na %>%
+    drop_na
+
+ #define correct label order
+vis_genes <- visualise_expr %>% 
+  arrange(pair) %>% 
+  select(gene_id, pair) %>%  
+  distinct() %>% select(gene_id)   
+
+vis_genes <- factor(vis_genes$gene_id, levels = vis_genes$gene_id)
+
+#add in p-value of the coefficient on the linear age variable 
+ visualise_expr <-
+ visualise_expr %>% 
+   left_join(select(poly_coeff_pvalue_df, `poly(AGE, 3)1`, ensembl_gene_id), by="ensembl_gene_id")
+ 
+#plot
+  plot <- visualise_expr %>% 
     ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
   geom_point()+ 
     facet_wrap(~pair, scales = "free_y") +
-  geom_smooth(se = FALSE, method = "loess") +
-        scale_colour_manual(values=col) 
+  geom_smooth(method = lm, formula = y ~ poly(x, 3), se = FALSE) +
+        scale_colour_brewer(breaks= vis_genes, palette = "Dark2" ) +
+          geom_dl(label=paste(as.factor(visualise_expr$gene_id), ",", " lin_coeff_p =", signif(visualise_expr$`poly(AGE, 3)1`, digits=3), sep = ""), method="smart.grid", inherit.aes=T) +
+    labs( title=c)
+ 
+plotlist[[c]] <- plot    
+}   
+   
+plot(ggarrange(plotlist = plotlist)  )
+   
+     
+  #visualise gene expression of positively correlated pairs
+   #negative correlation
+pos_corr_res_expr <- corr_res_expr_cat %>%  filter(cat== "pos_expr_pos_res") %>% arrange(p_expr) %>%  head(n=100) %>% tail(n=4)
+
+#visualise examples
+  #visualise gene expression of negatively correlated pairs
+ visualise_expr <-  cpm_all_long %>% 
+     mutate(pair = case_when(
+    ensembl_gene_id  %in% pos_corr_res_expr[1, 1:2] ~ "1",
+    ensembl_gene_id  %in% pos_corr_res_expr[2, 1:2] ~ "2",
+    ensembl_gene_id  %in% pos_corr_res_expr[3, 1:2] ~ "3",
+    ensembl_gene_id  %in% pos_corr_res_expr[4, 1:2] ~ "4",
+    TRUE ~ NA)) %>% 
+    drop_na
+ 
+  #define correct label order
+vis_genes <- visualise_expr %>% arrange(pair) %>% select(gene_id, pair) %>%  distinct() %>% select(gene_id)   
+vis_genes <- factor(vis_genes$gene_id, levels = vis_genes$gene_id)
+
+#plot
+   visualise_expr %>% 
+    ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+  geom_point()+ 
+    facet_wrap(~pair, scales = "free_y") +
+  geom_smooth(method = lm, formula = y ~ poly(x, 3), se = FALSE) +
+        scale_colour_brewer(breaks= vis_genes, palette = "Dark2" ) +
+     geom_dl(label=as.factor(visualise_expr$gene_id), method="last.qp", inherit.aes=T) + 
+    labs( title="Positively correlated gene pairs: expression and residuals")
+```
+
+
+
+
+
+
+```{r time trend significant coefficient}
+
+poly_coeff_pvalue_df %>% 
+  pivot_longer(cols = -"ensembl_gene_id", names_to = "coeff", values_to = "p") %>% 
+  filter(coeff != "(Intercept)", p<0.05) %>%  
+  ggplot() + 
+  geom_histogram(mapping = aes(x=p, colour= coeff))
+
+
+time_trend <- poly_coeff_pvalue_df %>% 
+  pivot_longer(cols = -"ensembl_gene_id", names_to = "coeff", values_to = "p") %>% 
+  filter(coeff != "(Intercept)", p<0.05) 
+
+time_trend_genes <-  time_trend %>% filter(p< 0.05) %>% select(ensembl_gene_id) %>% distinct()
+  
+time_trend_genes_linear <- time_trend %>% filter(p< 0.05 & coeff=="poly(AGE, 3)1") %>% select(ensembl_gene_id) %>% distinct()
+
+time_trend_genes_linear_adj <- 
+  time_trend %>% 
+  filter(coeff=="poly(AGE, 3)1") %>% 
+  adjust_pvalue( p = "p", output.col = "p_linear_adj", method = "fdr") %>% 
+  filter(p_linear_adj< 0.01)
+  
+  
+  
+  
+```
+
+
+```{r correlation residuals and expression in paralog pairs}
+#filter out paralog gene pairs. Not only GO: neuro!
+
+corr_res_expr_paralog1 <-   
+  corr_res_expr %>% 
+  inner_join(
+    select(paralogs, 
+           ensembl_gene_id, hsapiens_paralog_ensembl_gene, hsapiens_paralog_perc_id), 
+             by = c("geneX"="ensembl_gene_id", "geneY"="hsapiens_paralog_ensembl_gene"))  %>% 
+  distinct()
+   
+corr_res_expr_paralog2 <-   
+  corr_res_expr %>% 
+  inner_join(
+    select(paralogs, 
+           ensembl_gene_id, hsapiens_paralog_ensembl_gene, hsapiens_paralog_perc_id), 
+             by = c("geneY"="ensembl_gene_id", "geneX"="hsapiens_paralog_ensembl_gene")) %>% 
+  distinct()
+
+corr_res_expr_paralog <- bind_rows(corr_res_expr_paralog1, corr_res_expr_paralog2) %>%  distinct()
+ 
+
+p_thr = 0.05
+cor_thr = 0.5
+
+#categorise whether significant in both expr and res
+corr_res_expr_paralog_cat <- corr_res_expr_paralog %>% 
+  mutate(cat= case_when(
+    corr_expr > 0 & corr_res > 0 & p_expr  < p_thr & p_res < p_thr  ~ "pos_expr_pos_res",
+    corr_expr < 0 & corr_res < 0 & p_expr  < p_thr & p_res < p_thr  ~ "neg_expr_neg_res",
+    corr_expr > 0 & corr_res < 0 & p_expr  < p_thr & p_res < p_thr  ~ "pos_expr_neg_res",
+    corr_expr < 0 & corr_res > 0 & p_expr  < p_thr & p_res < p_thr  ~ "neg_expr_pos_res",
+     p_expr  > p_thr & p_res > p_thr  ~ "notsign_expr_notsign_res",
+    corr_expr > 0  & p_expr  < p_thr & p_res > p_thr  ~ "pos_expr_notsign_res",
+    corr_expr < 0  & p_expr  < p_thr & p_res > p_thr  ~ "neg_expr_notsign_res",
+    corr_res > 0  & p_expr  > p_thr & p_res < p_thr  ~ "notsign_expr_pos_res",
+    corr_res < 0  & p_expr  > p_thr & p_res < p_thr  ~ "notsign_expr_neg_res",
+         )
+  )
+
+#order the categories
+corr_res_expr_paralog_cat$cat <- factor(corr_res_expr_paralog_cat$cat, levels = c("neg_expr_neg_res", "notsign_expr_neg_res", "pos_expr_neg_res",
+                                                      "neg_expr_notsign_res", "notsign_expr_notsign_res", "pos_expr_notsign_res",
+                                                      "neg_expr_pos_res", "notsign_expr_pos_res", "pos_expr_pos_res"))
+
+
+#Create count data for labels
+Labels <- corr_res_expr_paralog_cat %>% group_by(cat, .drop=FALSE) %>% summarise(N=paste0('n: ',n(), ",\n", round(digits = 3, n()/length(corr_res_expr_paralog_cat$geneX))*100, "%"))
+#X position
+Labels$corr_expr <- 0.5
+
+
+
+
+#visualise 
+corr_res_expr_paralog_cat %>% 
+  pivot_longer(cols= c(corr_expr, corr_res), names_to = "cor_source", values_to = "cor") %>% 
+  ggplot(aes(x=corr_expr, 
+             stat = "count",fill=as.factor(cat))) + 
+  geom_freqpoly(aes(x= cor, colour= cor_source, linetype= cor_source)) +
+  geom_text(data = Labels, aes(x=corr_expr,y=40,label=N)) +
+  facet_wrap(~cat, nrow = 3, ncol = 3, drop = FALSE)  +
+  scale_colour_manual(values = c(corr_expr= "black", corr_res="blue") )+
+  scale_linetype_manual(values  = c(corr_expr= 1, corr_res= 2)) +
+  theme(text = 
+        element_text(size=10) ) +
+  ylab("count: gene pairs")
+  
+###Negative correlation
+
+
+#negative correlation
+neg_corr_res_expr_paralog <- 
+  corr_res_expr_paralog_cat %>%  
+  filter(cat== "neg_expr_neg_res") %>% 
+  filter(geneX %in% time_trend_genes$ensembl_gene_id & geneY %in% time_trend_genes$ensembl_gene_id) %>% 
+  dplyr::group_by(gene_name_X, gene_name_Y) %>% 
+  dplyr::slice(which.max(hsapiens_paralog_perc_id)) %>%  #need to have this, as there are multiple entries for homology percentage
+  ungroup() %>% 
+  arrange(p_res) 
+
+#visualise examples
+  #visualise gene expression of negatively correlated pairs
+ visualise_expr <-  cpm_all_long %>% 
+     mutate(pair = case_when(
+    ensembl_gene_id  %in% neg_corr_res_expr_paralog[1, 1:2] ~ "1",
+    ensembl_gene_id  %in% neg_corr_res_expr_paralog[2, 1:2] ~ "2",
+    ensembl_gene_id  %in% neg_corr_res_expr_paralog[3, 1:2] ~ "3",
+    ensembl_gene_id  %in% neg_corr_res_expr_paralog[4, 1:2] ~ "4",
+    TRUE ~ NA)) %>% 
+    drop_na
+
+ #define correct label order
+vis_genes <- visualise_expr %>% arrange(pair) %>% select(gene_id, pair) %>%  distinct() %>% select(gene_id)   
+vis_genes <- factor(vis_genes$gene_id, levels = vis_genes$gene_id)
+
+#plot
+   visualise_expr %>% 
+   #  left_join(select(corr_res_expr_paralog_cat,corr_expr, corr_res, gene_name_X, gene_name_Y, p_res_adj, p_expr_adj), by= c("gene_id"= "gene_name_X")) %>% head()
+    ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+  geom_point()+ 
+    facet_wrap(~pair, scales = "free_y") +
+  geom_smooth(method = lm, formula = y ~ poly(x, 3), se = FALSE) +
+        scale_colour_brewer(breaks= vis_genes, palette = "Dark2" ) +
+     geom_dl(label=as.factor(visualise_expr$gene_id), method="last.qp", inherit.aes=T) + 
+    labs( title="Negatively correlated gene pairs: expression and residuals") 
+   
+    
+###positive correlation    
+    
+    
+  #visualise gene expression of positively correlated pairs
+pos_corr_res_expr_paralog <- 
+  corr_res_expr_paralog_cat %>%  
+  filter(cat== "pos_expr_pos_res") %>%
+  dplyr::group_by(gene_name_X, gene_name_Y) %>% 
+  dplyr::slice(which.max(hsapiens_paralog_perc_id)) %>%  #need to have this, as there are multiple entries for homology percentage
+  ungroup() %>% 
+  arrange(p_res) %>%  
+  head(n=4) %>% 
+  mutate(pair= as.character(1:n())) 
   
 
+#visualise examples
+  #visualise gene expression of positively correlated pairs
+ visualise_expr <-  cpm_all_long %>% 
+     mutate(pair = case_when(
+    ensembl_gene_id  %in% pos_corr_res_expr_paralog[1, 1:2] ~ "1",
+    ensembl_gene_id  %in% pos_corr_res_expr_paralog[2, 1:2] ~ "2",
+    ensembl_gene_id  %in% pos_corr_res_expr_paralog[3, 1:2] ~ "3",
+    ensembl_gene_id  %in% pos_corr_res_expr_paralog[4, 1:2] ~ "4",
+    TRUE ~ NA)) %>% 
+    drop_na
+
+#add in correlation values for plotting
+ visualise_expr <-
+ visualise_expr %>% 
+   left_join(select(pos_corr_res_expr_paralog, corr_expr, corr_res, p_res_adj, p_expr_adj, hsapiens_paralog_perc_id, pair), by="pair") 
+ 
+#add in p-value of the coefficient on the linear age variable 
+ visualise_expr <-
+ visualise_expr %>% 
+   left_join(select(poly_coeff_pvalue_df, `poly(AGE, 3)1`, ensembl_gene_id), by="ensembl_gene_id")
+ 
+  #define correct label order
+vis_genes <- visualise_expr %>% arrange(pair) %>% select(gene_id, pair) %>%  distinct() %>% select(gene_id)   
+vis_genes <- factor(vis_genes$gene_id, levels = vis_genes$gene_id)
+
+# Data frame with y-position of labels. I've set the value to 90% of the maximum 
+# value of log_cpm
+pos = visualise_expr %>% group_by(pair) %>%
+  summarise(y.pos = 0.9 * max(log_cpm))
+
+
+#plot
+   visualise_expr %>% 
+     left_join(pos, by= "pair") %>%  #add in y-position for text labels in plot
+    ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+  geom_point()+ 
+    facet_wrap(~pair, scales = "free_y") +
+  geom_smooth(method = lm, formula = y ~ poly(x, 3), se = FALSE) +
+        scale_colour_brewer(breaks= vis_genes, palette = "Dark2" ) +
+     geom_dl(label=paste(as.factor(visualise_expr$gene_id), ",", " coeff_p =", signif(visualise_expr$`poly(AGE, 3)1`, digits=3), sep = ""), method="smart.grid", inherit.aes=T) + 
+    labs( title="Positively correlated gene pairs: expression and residuals") +
+     geom_text(mapping= aes(
+       label = paste("res_corr:", 
+                     round(corr_res, digits = 3), "p=", signif(p_res_adj, digits=3), sep = " "), 
+       x= 15, y= y.pos), 
+       colour= "black" ) 
+   
+```
+
+
+
+
+```{r enricment analysis}
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(enrichplot)
+library(DOSE)
+
+
+
+gene <- rownames(res[res$adj.P.Val < 0.05,])
+
+ggo <- groupGO(gene     = gene,
+               keyType = "ENSEMBL",
+               OrgDb    = org.Hs.eg.db,
+               ont      = "BP",
+               level    = 3,
+               readable = TRUE)
+
+#GO over-representation analysis
+ego <- enrichGO(gene          = gene,
+                universe      = rownames(res),
+                keyType = "ENSEMBL",
+                OrgDb         = org.Hs.eg.db,
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05,
+        readable      = TRUE)
+
+head(ego@result)
+
+simplify(ego)
+
+
+#plot GO analysis: Region
+gene <- rownames(res_region[res$adj.P.Val < 0.05,])
+
+#for this analysis, we need entrez ID
+gene.entrez <- bitr(gene, 
+                    fromType = 'ENSEMBL', 
+                    toType= 'ENTREZID', 
+                    OrgDb         = org.Hs.eg.db, 
+                    drop = TRUE)
+
+all.genes.entrez <-  bitr(rownames(res_region), 
+                    fromType = 'ENSEMBL', 
+                    toType= 'ENTREZID', 
+                    OrgDb         = org.Hs.eg.db, 
+                    drop = TRUE)
+
+
+ego <- enrichGO(gene          = gene,
+                universe      = rownames(res_region),
+                keyType = "ENSEMBL",
+                OrgDb         = org.Hs.eg.db,
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05,
+        readable      = TRUE) 
+
+ego <- enrichGO(gene.entrez$ENTREZID,
+                 universe = all.genes.entrez$ENTREZID
+                 )
+
+dotplot(ego, showCategory=30)
 ```
 
 Questions:
-Higher variance in <12?
-Find pairs of switches (channel subunits etc). Plot their expression with age.
+X Higher variance in <12? 
+-> Could we find examples of genes with higher variance below 12?
+
+X Find pairs of switches (channel subunits etc). Plot their expression with age.
+X Especially at paralog pairs. 
+-> High/ low homology.
+
+X 2D density plot res_cor, expr_cor p-value (see mail)
+
+X Add res corr- and p-value to gene pair expr plot. 
+X  Also p of the coefficient on the linear age variable?
+
 Enrichment analysis with ClusterProfiler (remember to combine into fewer pathways)
 Enrichment for myelin-related genes in CC?
-DE genes overlap with BD/SCZ GWAS?
 
+DE genes overlap with BD/SCZ GWAS? Switches overlapping? Distance to nearest locus/ overlap with gene list within pre-defined genomic window around loci?
+ 
+ 
+"DE-analysis" alternative: test whether the coefficient on the linear age variable  (the one to the power of 1) in the fitted line is significantly different from 0.
+ X code to get significant genes, nominally and FDR, linear/ all coefficients 
+
+Plot some of the extreme examples of not-significant/significant in correlation
+Filter on age-function coefficients to find age trends
 
