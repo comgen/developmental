@@ -1479,7 +1479,8 @@ vis_genes <- factor(vis_genes$gene_id, levels = vis_genes$gene_id)
     labs( title="Negatively correlated gene pairs: expression and residuals") 
    
     
-###positive correlation    
+   
+   ###positive correlation    
     
     
   #visualise gene expression of positively correlated pairs
@@ -1689,6 +1690,60 @@ ego_red_sign_total <-
 
  
  
+```
+
+
+
+```{r GWAS overlap BD}
+BD_GWAS_100kb <- read_tsv("~/PhD/GWAS-BD/PGC3/PGC3_loci_genes_100kb.txt")
+BD_GWAS_snp_pos <- read_tsv("~/PhD/GWAS-BD/PGC3/PGC3_loci_GRCh38.txt")
+
+BD_GWAS_100kb <- BD_GWAS_100kb %>% left_join(select(BD_GWAS_snp_pos, "Variant name", "Chromosome/scaffold position start (bp)" ), by= c("SNP" = "Variant name"))
+
+#genes with linear age trend within 100kb from GWAS loci CC 
+time_trend_genes_linear_GWAS_CC <-   
+  BD_GWAS_100kb %>% 
+  filter(ensgene %in% time_trend_genes_linear_adj_CC$ensembl_gene_id ) %>% 
+  rowwise() %>% 
+  mutate(lead_SNP_distance = min(abs(`Chromosome/scaffold position start (bp)` - `Gene start (bp)`), abs( `Chromosome/scaffold position start (bp)` - `Gene end (bp)`) )) %>% select(ensgene, symbol, Locus, SNP, CHR, lead_SNP_distance)
+
+#visualise expression when nearest gene has time trend: CC
+expr_time_GWAS_closest_CC <- 
+  cpm_all_long_CC %>% 
+  filter(gene_id %in% time_trend_genes_linear_GWAS_CC$symbol) %>% 
+  left_join(time_trend_genes_linear_GWAS_CC, by= c("gene_id" = "symbol")) %>% filter(gene_id== Nearest_gene) %>%  
+  ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+    geom_point() + 
+    facet_wrap(~gene_id, scales = "free_y") +
+    geom_smooth(method = lm, formula = y ~ poly(x, 3), se = FALSE) 
+
+#genes with linear age trend within 100kb from GWAS loci DFC
+time_trend_genes_linear_adj_DFC <- read_tsv("~/proj_Maryland_WGCNA/analysis/time_trend_genes/time_trend_linear.txt")
+
+time_trend_genes_linear_GWAS_DFC <-   
+  BD_GWAS_100kb %>% 
+  filter(ensgene %in% time_trend_genes_linear_adj_DFC$ensembl_gene_id ) %>% 
+  rowwise() %>% 
+  mutate(lead_SNP_distance = min(abs(`Chromosome/scaffold position start (bp)` - `Gene start (bp)`), abs( `Chromosome/scaffold position start (bp)` - `Gene end (bp)`) )) %>% select(ensgene, symbol, Locus, SNP, CHR, lead_SNP_distance, Nearest_gene)
+
+
+#visualise expression when nearest gene has time trend: DFC
+ expr_time_GWAS_closest_DFC <-
+   cpm_all_long_DFC %>% filter(gene_id %in% time_trend_genes_linear_GWAS_DFC$symbol) %>% left_join(time_trend_genes_linear_GWAS_DFC, by= c("gene_id" = "symbol")) %>% filter(gene_id== Nearest_gene) %>%  ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+    geom_point()+ 
+    facet_wrap(~gene_id, scales = "free_y") +
+    geom_smooth(method = lm, formula = y ~ poly(x, 3), se = FALSE) 
+ 
+#genes in age-switch gene pair within 100kb from GWAS loci DFC 
+
+
+ 
+ 
+ 
+ #save results
+ ggsave(plot = expr_time_GWAS_closest_CC, filename = "~/proj_Maryland_WGCNA/analysis/time_trend_genes_CC/expr_time_GWAS_closest_CC.pdf")
+ 
+  ggsave(plot = expr_time_GWAS_closest_DFC, filename = "~/proj_Maryland_WGCNA/analysis/time_trend_genes/expr_time_GWAS_closest_DFC.pdf")
 ```
 
 Questions:
