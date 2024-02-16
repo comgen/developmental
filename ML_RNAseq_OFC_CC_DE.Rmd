@@ -38,21 +38,21 @@ This code is to import the Maryland data and produce normalised and filtered dat
 ### Add sample info
 
 ```{r add info}
-info_DFC <- 
+info_OFC <- 
   readxl::read_xlsx("/Users/asbjorh/PhD/ANK3_HTS-amplicons/Maryland/data/Maryland_Samples_NBB1582DonorInfo_cleaned.xlsx", sheet = 1, col_names = TRUE) %>% 
   dplyr::select(c("RNA ID", "AGEYEARS", "AGEDAYS", "RIN AMG", "RNAseq", "PMINTERVAL", "CDEATHOFF")) %>% filter(RNAseq!=0) %>% select(-RNAseq) %>% distinct()
 
 #simplify the names of samples to match data
-info_DFC$`RNA ID` <-  str_remove(info_DFC$`RNA ID`, "MD_")
-info_DFC$`RNA ID` <-  str_remove(info_DFC$`RNA ID`, "_RNA")
-info_DFC$`RNA ID` <-  str_replace(info_DFC$`RNA ID`, "_", "-")
-info_DFC <- dplyr::rename(info_DFC, sampleID="RNA ID")
+info_OFC$`RNA ID` <-  str_remove(info_OFC$`RNA ID`, "MD_")
+info_OFC$`RNA ID` <-  str_remove(info_OFC$`RNA ID`, "_RNA")
+info_OFC$`RNA ID` <-  str_replace(info_OFC$`RNA ID`, "_", "-")
+info_OFC <- dplyr::rename(info_OFC, sampleID="RNA ID")
 
-info_DFC <- info_DFC %>% filter(!(sampleID=="5162-BA11" & `RIN AMG`== 9.6)) #this sample has 2 entries, unknown which was used for RNAseq, remove best RIN, keep RIN = 9.1
+info_OFC <- info_OFC %>% filter(!(sampleID=="5162-BA11" & `RIN AMG`== 9.6)) #this sample has 2 entries, unknown which was used for RNAseq, remove best RIN, keep RIN = 9.1
 
-info_DFC <- dplyr::rename(info_DFC, RIN_AMG="RIN AMG")
+info_OFC <- dplyr::rename(info_OFC, RIN_AMG="RIN AMG")
 
-info_DFC$sampleID <- str_remove(info_DFC$sampleID,  "-BA11")
+info_OFC$sampleID <- str_remove(info_OFC$sampleID,  "-BA11")
 
 info_CC <-
 readxl::read_xlsx("~/proj_Maryland_WGCNA/data/RNAseq_CC samples_december_2021/sample_table_96_RNAseq_cleaned.xlsx", sheet = 1, col_names = TRUE)
@@ -65,7 +65,7 @@ info_CC <-
 info_CC$sampleID <- as.character(info_CC$sampleID)
 
 info_CC <- 
-  info_CC %>% left_join(select(info_DFC, -RIN_AMG), by= "sampleID")
+  info_CC %>% left_join(select(info_OFC, -RIN_AMG), by= "sampleID")
 
 
 #change age (years+days) into decimal years. Remove cause of death.
@@ -76,9 +76,9 @@ info_CC <-
   dplyr::mutate(AGE = AGEYEARS + (AGEDAYS/365)) %>%
     select(-AGEYEARS, -AGEDAYS)
 
-info_DFC <- 
-  info_DFC %>% 
-  mutate(sampleID = paste0(sampleID, "-DFC")) %>% 
+info_OFC <- 
+  info_OFC %>% 
+  mutate(sampleID = paste0(sampleID, "-OFC")) %>% 
   select(-CDEATHOFF) %>% 
   dplyr::mutate(AGE = AGEYEARS + (AGEDAYS/365)) %>%
     select(-AGEYEARS, -AGEDAYS)
@@ -94,15 +94,15 @@ info_CC <-
 
 info_CC$below12 <- as.factor(info_CC$below12)
 
-#do the same for DFC
-info_DFC <-
-  info_DFC %>% 
+#do the same for OFC
+info_OFC <-
+  info_OFC %>% 
   mutate(below12 = case_when(
     AGE < 12  ~ 1,
     TRUE ~ 0)
   )
 
-info_DFC$below12 <- as.factor(info_DFC$below12)
+info_OFC$below12 <- as.factor(info_OFC$below12)
 ```
 
 
@@ -170,7 +170,7 @@ d <-
 
 ```
 
-```{r import counts DFC}
+```{r import counts OFC}
 f = list.files("/Users/asbjorh/PhD/RNAseq_temporal/data/OFC/",  pattern= ".counts$", full.names  = TRUE) #results from 
 
 
@@ -195,7 +195,7 @@ d$file <- #remove unnescessary prefix text from sample names
   str_remove(d$file, "/Users/asbjorh/PhD/RNAseq_temporal/data/OFC//") 
 
 d$file  <- #replace unnescessary suffix text from sample names
-  str_replace(d$file , ".counts", "-DFC") 
+  str_replace(d$file , ".counts", "-OFC") 
 
 
 d <- 
@@ -205,7 +205,7 @@ d <-
 
  colnames(count) <- str_remove(colnames(count),  "-BA11")
  
- count_DFC <- count
+ count_OFC <- count
 
 ```
 
@@ -213,12 +213,12 @@ d <-
 
 
 ```{r Process data}
-clinMeta <- info_CC
-#clinMeta <- info_DFC
+#clinMeta <- info_CC
+clinMeta <- info_OFC
 
 #
-count <- count_CC
-#count <- count_DFC
+#count <- count_CC
+count <- count_OFC
 
 # exclude outlier CC_1259 sample
 exclude <- "1259-CC"
@@ -242,6 +242,7 @@ all( rownames(colData) == colnames(data))
 
 library(biomaRt)
 ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="https://useast.ensembl.org")
+
 genemap <- getBM(attributes=c("entrezgene_id","ensembl_gene_id", "external_gene_name", "gene_biotype", "go_id", "name_1006", "chromosome_name", "start_position", "end_position"), filters="ensembl_gene_id", 
 	values=rownames(data), mart=ensembl)
 genemap <- genemap[ duplicated(genemap$ensembl_gene_id) == F,]
@@ -250,8 +251,8 @@ rownames(genemap) <- genemap$ensembl_gene_id #rownames in case dataframe is need
 
 ## Remove lowly expressed genes
 
-library(edgeR)
-keep <- filterByExpr(data#, design=colData$below12 #we don't want to have design here, do we? Because if genes are not at all expressed in either category it will be filtered out?
+#library(edgeR)
+keep <- filterByExpr(data, design=colData$below12 #we don't want to have design here, do we? Because if genes are not at all expressed in either category it will be filtered out?  -> The opposite is true! Group-aware filtering makes sure there is expression in enough samples within at least one group. 
 )
 data.filt <- data[keep,]
 
@@ -262,28 +263,13 @@ genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding","lncRNA"))
 data.filt <- data.filt[rownames(genemap2),]
 ```
 
-```{r normalise with Deseq2, eval=FALSE}
-
-dds <- DESeqDataSetFromMatrix(countData=data.filt, colData=colData, design=~below12)
-dds <- DESeq(dds)
-
-vsd <- vst(dds, blind=FALSE)
-
-cpm_deseq2 <- fpm(dds, robust = TRUE)
-cpm_log_deseq2 <- log2(cpm_deseq2 + 0.1)
-
-```
-
-
-
-
 
 ```{r DE analyses childhood vs adolescence}
 #analysis <- "CC_DE_below12"
-#analysis <- "DFC_DE_below12"
+analysis <- "OFC_DE_below12"
+sig_level <- 0.01
 
-
-#res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis)
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis)
 
 
 y <- DGEList(counts = data.filt, genes = genemap2, samples=SampleID)
@@ -294,36 +280,45 @@ design <- model.matrix(~ below12  + RIN_AMG + PMINTERVAL, data = colData)
 v <- voomWithQualityWeights(y, design, plot = TRUE)
 fit <- lmFit(v, design)
 fit <- eBayes(fit)
-summary(decideTests(fit, p.value=0.1))
+summary(decideTests(fit, p.value=sig_level))
 
 res <- topTable(fit, coef="below121", n=Inf, p.value=1)
-#write.table(res, paste0(res_dir, "/de_limma_DFC_below12.txt"), sep="\t", row.names=F)
+#write.table(res, paste0(res_dir, "/de_limma_OFC_below12.txt"), sep="\t", row.names=F)
 
 
 table_sign_genes <- summary(decideTests(fit, p.value=sig_level))
 kableExtra::kable(table_sign_genes, "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
   kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
 
-write.table(res_region, paste0(res_dir, "/de_limma.txt"), sep="\t", row.names=F)
+write.table(res, paste0(res_dir,"_",analysis, "/de_limma.txt"), sep="\t", row.names=F)
+
+
+if(identical(analysis,  "OFC_DE_below12")){
+DE_0.01_OFC <- res %>% filter(adj.P.Val <= 0.01)
+}  
+
+if(identical(analysis,  "CC_DE_below12")){
+  DE_genes_0.01_CC <- res %>% filter(adj.P.Val <= 0.01)
+}  
 
 ```
 
-```{r DE analyses DFC vs CC}
+```{r DE analyses OFC vs CC}
 #analysis <- "CC_DE_below12"
-#analysis <- "DFC_DE_below12"
+#analysis <- "OFC_DE_below12"
 #sig_level <- 0.05
 
-analysis <- "DFC_CC_DE"
+analysis <- "OFC_CC_DE"
 sig_level <- 0.01
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
 counts_all <- 
-  bind_cols(count_CC, count_DFC)
+  bind_cols(count_CC, count_OFC)
 
 counts_all <- na.omit(counts_all)
 
-colData_all <-  bind_rows("DFC"=info_DFC,
+colData_all <-  bind_rows("OFC"=info_OFC,
                           "CC"= select(info_CC, -CDEATHOFF),
                           .id = "region")
  
@@ -331,12 +326,17 @@ colData_all <- colData_all %>% filter(sampleID != exclude)
 
 sample_all <-  colnames(counts_all)[colnames(counts_all) %in% colData_all$sampleID]
 
-keep <- filterByExpr(counts_all
-)
+design <- model.matrix(~ region, data = colData_all)
+keep <- filterByExpr(counts_all, design = design) #keep genes that have decent expression in at least one group
+                     
+# keep <- filterByExpr(counts_all #default is remove genes with very low in >30% of samples. Removes genes completely without expression in one of the regions. Is that what we want? 
+# )
 counts_all.filt <- counts_all[keep,]
-counts_all.filt <- counts_all.filt[rownames(counts_all.filt) %in% rownames(genemap2), colnames(counts_all.filt) != exclude]
 
-genemap2 <- genemap2[rownames(counts_all.filt),]
+genemap2 <- genemap[rownames(counts_all.filt),]
+genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding","lncRNA"))
+
+counts_all.filt <- counts_all.filt[rownames(counts_all.filt) %in% rownames(genemap2), colnames(counts_all.filt) != exclude]
 
 y <- DGEList(counts = counts_all.filt, genes = genemap2, samples=sample_all)
 y <- calcNormFactors(y) #normLibSizes is the new name for calcNormFactors
@@ -349,12 +349,17 @@ fit <- eBayes(fit)
 summary(decideTests(fit, p.value=sig_level))
 
 table_sign_genes <- summary(decideTests(fit, p.value=sig_level))
+
+#save table with number of genes
 kableExtra::kable(table_sign_genes, "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
   kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
 
-res_region <- topTable(fit, coef="regionDFC", n=Inf, p.value=1)
+res_region <- topTable(fit, coef="regionOFC", n=Inf, p.value=1)
 
 write.table(res_region, paste0(res_dir, "/de_limma.txt"), sep="\t", row.names=F)
+
+high_OFC_FDR_001 <- res_region %>%  filter(t < 0 & adj.P.Val < 0.01)
+low_OFC_FDR_001 <- res_region %>%  filter(t > 0 & adj.P.Val < 0.01)
 
 ```
 
@@ -522,20 +527,22 @@ plot_expr <-
 colData.filt <- subset(colData, rownames(colData) %in% SampleID )
 
 
-df <- cpm(y, log=TRUE, prior.count=3) #convert counts to normalised cpm
-
-df <- df %>% t() %>% data.frame() 
+df <- cpm(y, log=TRUE, prior.count=3) #convert counts to normalised cpm. genes as rownames
 
 
 
-df_top10  <- df[rownames(head(res,10)), ] #only keep the top 10 significant genes
+
+
+df_top10  <- df[rownames(head(res_region,10)), ] #only keep the top 10 significant genes
 
 df_top10 <- df_top10 %>% t() %>% data.frame()     #have genes as columns
 colnames(df_top10) <- head(res,10)$external_gene_name #use gene symbols in stead of ensembl codes
 
-df_top10 <- df_top10 %>% rename("SampleID" = Row.names )
+df_top10 <- df_top10 %>% rownames_to_column(var = "SampleID" )
 
 #prepare for flexible plotting
+
+df <- df %>% t() %>% data.frame() 
 df_long <- 
   df %>% 
   rownames_to_column(var = "SampleID") %>% 
@@ -567,7 +574,34 @@ plot_expr <-
 
 ggsave(plot_expr, file = paste0(res_dir, "/plot_expr_top10sign.pdf" ))  
   
+#plot expression highest in OFC/ CC separately
+plot_expr_highOFC <- 
+  df_long %>% 
+    filter(external_gene_name %in% high_OFC_FDR_001$external_gene_name[1:10] ) %>% 
+  ggplot(aes(x=region, y= log_cpm)) + 
+    geom_boxplot( color ="black",size=0.7, outlier.shape=NA, fill="white") +
+    geom_point(aes( colour= region, fill = region), position= "jitter") +
+  facet_wrap(~external_gene_name, scales = "free_y") +
+      scale_colour_manual(values=col[c(1,6)]) +
+    scale_fill_manual(values=col[c(1,6)]) +
+  labs(title= paste0("Normalised expression, 10 significant genes higher in OFC")) +
+  theme_bw()
 
+plot_expr_highCC <- 
+  df_long %>% 
+    filter(external_gene_name %in% low_OFC_FDR_001$external_gene_name[1:10] ) %>% 
+  ggplot(aes(x=region, y= log_cpm)) + 
+    geom_boxplot( color ="black",size=0.7, outlier.shape=NA, fill="white") +
+    geom_point(aes( colour= region, fill = region), position= "jitter") +
+  facet_wrap(~external_gene_name, scales = "free_y") +
+      scale_colour_manual(values=col[c(1,6)]) +
+    scale_fill_manual(values=col[c(1,6)]) +
+  labs(title= paste0("Normalised expression, 10 significant genes higher in OFC")) +
+  theme_bw()
+
+ggsave(plot_expr_highOFC, file = paste0(res_dir, "/plot_expr_top10sign_highOFC.pdf" ))  
+ggsave(plot_expr_highCC, file = paste0(res_dir, "/plot_expr_top10sign_highCC.pdf" ))  
+  
 
 ```
 
@@ -641,7 +675,7 @@ genes_sd_diff <-
   theme_bw()
 
   #For CC, it is clear that the largest difference in sd is due to 1 outlier sample in many cases, and it is not the AGE<2 samples
-  #For DFC, there are more samples contributing to high sd.
+  #For OFC, there are more samples contributing to high sd.
 
 #It could be interesting to analyse all genes 1-by-1 and test for differences in variance of expression in children vs adolescents. This could be an indication of genes that come under strong stoichiometric constraint during adolescence
 
@@ -662,7 +696,7 @@ GO_top_sd_diff <- sd_diff_genes %>%
   drop_na() %>% 
   distinct() %>% head(n=6)
 
-#DFC: GO-terms of genes with more variance in childhood includes membrane (CACNA1, PAQR6), G-protein signaling and mitochondrial genes.
+#OFC: GO-terms of genes with more variance in childhood includes membrane (CACNA1, PAQR6), G-protein signaling and mitochondrial genes.
   
   cpm_all_long %>% 
     filter(ensembl_gene_id %in% sd_diff_genes$gene_id) %>% 
@@ -730,7 +764,7 @@ write_tsv(select(cpm_all_long, -CDEATHOFF), file = paste0(res_dir, "cpm_all_long
 
 ```{r find neuronal function genes}
 
-analysis <- "switches/DFC"
+analysis <- "switches/OFC"
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
@@ -1018,7 +1052,7 @@ library(directlabels)
 library(rstatix)
 
 #cpm_all_long <- cpm_all_long %>% 
- # left_join(info_DFC, by=c("SampleID"= "sampleID"))
+ # left_join(info_OFC, by=c("SampleID"= "sampleID"))
 
 gene <- "KCNQ5"
 
@@ -1560,12 +1594,25 @@ library(rrvgo) # Reduce + Visualize GO by identifying redundence based on semant
 #CC: Cellular Component 
 #MF: Molecular Function
 
-# below vs above 12 years-old, DFC
+# below vs above 12 years-old, OFC
+gene <- rownames(DE_0.01_OFC[res$adj.P.Val < 0.01,])
 # below vs above 12 years-old, CC
 
-#DFC vs CC
+#OFC vs CC
 res <- res_region
 gene <- rownames(res[res$adj.P.Val < 0.01,])
+
+#OFC higher than CC
+analysis <- "higherOFC"
+res_dir <- "~/proj_Maryland_WGCNA/analysis/OFC_CC_DE/highOFC/"
+res <- res_region
+gene <- high_OFC_FDR_001$ensembl_gene_id
+
+#CC higher than OFC
+analysis <- "higherCC"
+res_dir <- "~/proj_Maryland_WGCNA/analysis/OFC_CC_DE/highCC/"
+res <- res_region
+gene <- low_OFC_FDR_001$ensembl_gene_id
 
 #Genes with significant age-coefficient
 gene <- time_trend_genes_linear_adj$ensembl_gene_id
@@ -1583,17 +1630,11 @@ neg_corr_gene_pairs <-
 
 gene <- unique(genemap2$ensembl_gene_id[genemap2$ensembl_gene_id %in% corr_res_expr_neg$geneX | genemap2$ensembl_gene_id %in% corr_res_expr_neg$geneY])
 
-#gene classification based on GO distribution
-ggo <- groupGO(gene     = gene,
-               keyType = "ENSEMBL",
-               OrgDb    = org.Hs.eg.db,
-               ont      = "BP",
-               level    = 3,
-               readable = TRUE)
+
 
 #GO over-representation analysis
 ego <- enrichGO(gene          = gene,
-                universe      = #rownames(res), 
+              #  universe      = rownames(res), 
                 poly_coeff_pvalue_df$ensembl_gene_id,
                 keyType = "ENSEMBL",
                 OrgDb         = org.Hs.eg.db,
@@ -1607,7 +1648,9 @@ ego <- enrichGO(gene          = gene,
 
   dotplot(ego, showCategory=30)
  GO_dotplot <- dotplot(ego, showCategory=30, )
-  
+
+ 
+#method to group GO-terms into simpler result 
 ego_simple <- clusterProfiler::simplify(
   ego,
   cutoff = 0.7,
@@ -1619,7 +1662,29 @@ ego_simple <- clusterProfiler::simplify(
 
 dotplot(ego_simple, showCategory=30)
 
-#convert to dataframe and plot 
+#metod using ranked gene lists. But can't input universe (all relevant genes)?
+# gene_sorted <- res[res$adj.P.Val < 0.01, "adj.P.Val"]
+# names(gene_sorted) <- rownames(res)[res$adj.P.Val < 0.01]
+# 
+# gene_sorted <- sort(-log10(gene_sorted), decreasing = TRUE)
+# 
+# gse <- gseGO(
+# geneList = gene_sorted,
+# ont = "BP",
+# OrgDb = org.Hs.eg.db,
+# keyType = "ENSEMBL",
+# exponent = 1,
+# minGSSize = 10,
+# maxGSSize = 500,
+# eps = 1e-10,
+# pvalueCutoff = 0.01,
+# pAdjustMethod = "BH",
+# verbose = TRUE,
+# by = "fgsea"
+# )
+
+#reduce GO-terms by adding the parent term
+#convert to dataframe and score GO-terms
   simMatrix <- calculateSimMatrix(ego$ID, orgdb="org.Hs.eg.db", ont="BP", method="Rel")
   scores <- setNames(-log10(ego$p.adjust), ego$ID)
   red <- reduceSimMatrix(simMatrix, scores, threshold=0.7, orgdb="org.Hs.eg.db")
@@ -1678,8 +1743,8 @@ ego_red_sign_total <-
   
  ggsave(parentGO_plot, file = paste0(res_dir, "/plot_reducedGOenrich.pdf" ),
         #height = length(ego_red_sign$ID)/3, 
-        height= 7,
-        width= 15, units = "cm")  
+        height= 12,
+        width= 18, units = "cm")  
   
  ggsave(GO_dotplot, file = paste0(res_dir, "/plot_GOenrich.pdf" ))  
    
@@ -1739,29 +1804,29 @@ expr_time_GWAS_l2g_CC <-
     facet_wrap(~gene_id, scales = "free_y") +
     geom_smooth(method = lm, formula = y ~ poly(x, 3), se = FALSE) 
 
-#genes with linear age trend within 100kb from GWAS loci DFC
-time_trend_genes_linear_adj_DFC <- read_tsv("~/proj_Maryland_WGCNA/analysis/time_trend_genes/time_trend_linear.txt")
+#genes with linear age trend within 100kb from GWAS loci OFC
+time_trend_genes_linear_adj_OFC <- read_tsv("~/proj_Maryland_WGCNA/analysis/time_trend_genes/time_trend_linear.txt")
 
-time_trend_genes_linear_GWAS_DFC <-   
+time_trend_genes_linear_GWAS_OFC <-   
   BD_GWAS_100kb %>% 
-  filter(ensgene %in% time_trend_genes_linear_adj_DFC$ensembl_gene_id ) %>% 
+  filter(ensgene %in% time_trend_genes_linear_adj_OFC$ensembl_gene_id ) %>% 
   rowwise() %>% 
   mutate(lead_SNP_distance = min(abs(`Chromosome/scaffold position start (bp)` - `Gene start (bp)`), abs( `Chromosome/scaffold position start (bp)` - `Gene end (bp)`) )) %>% select(ensgene, symbol, Locus, SNP, CHR, lead_SNP_distance, Nearest_gene)
 
 
-#visualise expression when nearest gene has time trend: DFC
- expr_time_GWAS_closest_DFC <-
-   cpm_all_long_DFC %>% filter(gene_id %in% time_trend_genes_linear_GWAS_DFC$symbol) %>% left_join(time_trend_genes_linear_GWAS_DFC, by= c("gene_id" = "symbol")) %>% filter(gene_id== Nearest_gene) %>%  ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+#visualise expression when nearest gene has time trend: OFC
+ expr_time_GWAS_closest_OFC <-
+   cpm_all_long_OFC %>% filter(gene_id %in% time_trend_genes_linear_GWAS_OFC$symbol) %>% left_join(time_trend_genes_linear_GWAS_OFC, by= c("gene_id" = "symbol")) %>% filter(gene_id== Nearest_gene) %>%  ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
     geom_point()+ 
     facet_wrap(~gene_id, scales = "free_y") +
     geom_smooth(method = lm, formula = y ~ poly(x, 3), se = FALSE) 
  
  
-#visualise expression when l2g-gene has time trend: DFC
-expr_time_GWAS_l2g_DFC <- 
-  cpm_all_long_DFC %>% 
+#visualise expression when l2g-gene has time trend: OFC
+expr_time_GWAS_l2g_OFC <- 
+  cpm_all_long_OFC %>% 
   filter(gene_id %in% BD_GWAS_l2g$symbol) %>% 
-  left_join(time_trend_genes_linear_GWAS_DFC, by= c("gene_id" = "symbol")) %>% filter(gene_id== Nearest_gene) %>%  
+  left_join(time_trend_genes_linear_GWAS_OFC, by= c("gene_id" = "symbol")) %>% filter(gene_id== Nearest_gene) %>%  
   ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
     geom_point() + 
     facet_wrap(~gene_id, scales = "free_y") +
@@ -1769,19 +1834,19 @@ expr_time_GWAS_l2g_DFC <-
  
 
  
-#genes in age-switch gene pair within 100kb from GWAS loci DFC 
+#genes in age-switch gene pair within 100kb from GWAS loci OFC 
 
 
  
  #save results
  ggsave(plot = expr_time_GWAS_closest_CC, filename = "~/proj_Maryland_WGCNA/analysis/time_trend_genes_CC/expr_time_GWAS_closest_CC.pdf")
-  ggsave(plot = expr_time_GWAS_closest_DFC, filename = "~/proj_Maryland_WGCNA/analysis/time_trend_genes/expr_time_GWAS_closest_DFC.pdf")
+  ggsave(plot = expr_time_GWAS_closest_OFC, filename = "~/proj_Maryland_WGCNA/analysis/time_trend_genes/expr_time_GWAS_closest_OFC.pdf")
 
 ggsave(plot = expr_time_GWAS_l2g_CC, 
           filename = "~/proj_Maryland_WGCNA/analysis/time_trend_genes_CC/expr_time_GWAS_l2g_CC.pdf")
  
-ggsave(plot = expr_time_GWAS_l2g_DFC, 
-         filename = "~/proj_Maryland_WGCNA/analysis/time_trend_genes/expr_time_GWAS_l2g_DFC.pdf")
+ggsave(plot = expr_time_GWAS_l2g_OFC, 
+         filename = "~/proj_Maryland_WGCNA/analysis/time_trend_genes/expr_time_GWAS_l2g_OFC.pdf")
   
   
   
@@ -1805,9 +1870,9 @@ expr_time_GWAS_myelin_CC <-
     geom_smooth(method = lm, formula = y ~ poly(x, 3), se = FALSE) 
 
 
-expr_time_GWAS_myelin_DFC <- 
-  cpm_all_long_DFC %>% 
-  filter(gene_id %in% time_trend_genes_linear_GWAS_DFC$symbol) %>% 
+expr_time_GWAS_myelin_OFC <- 
+  cpm_all_long_OFC %>% 
+  filter(gene_id %in% time_trend_genes_linear_GWAS_OFC$symbol) %>% 
   filter(ensembl_gene_id %in% myelin_genes$`ENSEMBL ID`) %>% 
   ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
     geom_point() + 
