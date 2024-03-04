@@ -972,10 +972,10 @@ neg_corr_membrane <- cor_paralogs_neuro_sim %>%
 
 
 ```{r age trend significant coefficient}
-#analysis <- "age_trend_genes_OFC"
-#cpm_all_long <- cpm_all_long_OFC
-analysis <- "age_trend_genes_CC"
-cpm_all_long <- cpm_all_long_CC
+analysis <- "age_trend_genes_OFC"
+cpm_all_long <- cpm_all_long_OFC
+#analysis <- "age_trend_genes_CC"
+#cpm_all_long <- cpm_all_long_CC
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
@@ -1071,23 +1071,73 @@ ggsave(age_trend_linear,  file = paste0(res_dir, "/plot_top10_AGE_linear.pdf" ))
 
 write_tsv(age_trend_genes, file = paste0(res_dir, "/age_trend_genes.txt" ))
 write_tsv(age_trend_genes_linear_adj, file = paste0(res_dir, "/age_trend_linear.txt" ))
+
+write.csv(res_poly_all_df, file = paste0(res_dir, "/res_poly_all_df.txt" ))
+```
+
+Investigate correlation pairs where genes have the same GO-annotation
+```{r create table of GO-terms}
+GOall <- AnnotationDbi::select(org.Hs.eg.db, columns = c("ENSEMBL" , "SYMBOL" , "GO" , "GOALL"), keys= unique(age_trend_genes_linear_adj$ensembl_gene_id), keytype = "ENSEMBL") 
+
+GOall <- AnnotationDbi::select(org.Hs.eg.db, columns = c("ENSEMBL" , "SYMBOL" , "GO"), keys= unique(age_trend_genes_linear_adj$ensembl_gene_id), keytype = "ENSEMBL") 
+
+GOall_BP <- 
+  GOall %>%  
+  tidyr::drop_na() %>%  
+  filter(ONTOLOGY =="BP")
+
+descr <- clusterProfiler::go2term(GOall_BP$GO)
+
+GOall_BP <- 
+  GOall_BP %>% 
+  dplyr::select(-EVIDENCE) %>% 
+  distinct() %>% 
+  left_join(descr, by = c("GO" = "go_id"))
+
+pairs_GO_Var2 <- pairs %>% left_join(select(GOall_BP, ENSEMBL, GO), by= c("Var2" = "ENSEMBL"), relationship = "many-to-many") %>% dplyr::rename("Var2_GO" = GO) %>% tidyr::drop_na()
+pairs_GO_Var1 <- pairs %>% left_join(select(GOall_BP, ENSEMBL, GO), by= c("Var1" = "ENSEMBL"), relationship = "many-to-many") %>% dplyr::rename("Var1_GO" = GO) %>%  tidyr::drop_na()
+pairs_GO <- pairs_GO_Var1 %>% left_join(pairs_GO_Var2, by= c("Var1", "Var2")) %>% tidyr::drop_na()
+pairs_GO_equal <- pairs_GO %>%  filter(Var1_GO == Var2_GO)
+
+pairs_GO_equal <- 
+  pairs_GO_equal %>% 
+  select(-Var2_GO) %>% 
+  rename("GO" = Var1_GO) %>% 
+  left_join(select(GOall_BP, GO, Term), by = "GO") %>%  #insert GO term description
+    distinct()
+
+#Problem: many genes have many GO-terms. 
+#restrict pairs analysis to the enriched GO-terms?
+GO_enrich <- 
+  GOall_BP %>% 
+  filter(GO %in% gse@result$ID[gse@result$p.adjust < sig_level])
+
+ego@result %>% filter(p.adjust < sig_level) %>% filter(ID %in% gse@result$ID[gse@result$p.adjust < sig_level]) %>% dim()
+
+
+
+
+
+
 ```
 
 
-```{r correlation residuals and expression levels}
-# analysis <- "switches/opposite_linear/OFC"
-# cpm_all_long_OFC <- 
-#   read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_OFC.txt" )
-# age_trend_genes_linear_adj <-
-#   read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt")
-# cpm_all_long <- cpm_all_long_OFC
+```{r genes of interest correlation residuals and expression levels}
 
-analysis <- "switches/opposite_linear/CC"
-cpm_all_long_CC <- 
-  read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_CC.txt" )
-age_trend_genes_linear_adj <-
-  read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt")
-cpm_all_long <- cpm_all_long_CC
+
+ analysis <- "switches/opposite_linear/OFC"
+ cpm_all_long_OFC <- 
+   read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_OFC.txt" )
+ age_trend_genes_linear_adj <-
+   read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt")
+ cpm_all_long <- cpm_all_long_OFC
+
+#analysis <- "switches/opposite_linear/CC"
+#cpm_all_long_CC <- 
+ # read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_CC.txt" )
+#age_trend_genes_linear_adj <-
+ # read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt")
+#cpm_all_long <- cpm_all_long_CC
 
 
 coeff_min <- 2 #the minimum linear coefficient included in the analysis
@@ -1098,6 +1148,8 @@ library(corrplot)
 library(directlabels)
 library(rstatix)
 
+library(org.Hs.eg.db)
+library(AnnotationDbi)
 #cpm_all_long <- cpm_all_long %>% 
  # left_join(info_OFC, by=c("SampleID"= "sampleID"))
 
@@ -1148,7 +1200,8 @@ neg_linear <-
   filter(p_linear_adj > sig_level & lin_coeff <0)  %>% 
   filter(abs(lin_coeff) >= coeff_min)
 
-pairs <- expand.grid(pos_linear$ensembl_gene_id, neg_linear$ensembl_gene_id) #Create a data frame from all combinations of the supplied vectors
+pairs <- expand.grid(pos_linear$ensembl_gene_id, neg_linear$ensembl_gene_id) #Create a data frame from all combinations of the 
+                                            #supplied vectors
 #only keep genes with a certain range (not too flat curve over age)
 genes_range1.5<- 
   cpm_all_long %>% 
@@ -1164,44 +1217,56 @@ pairs <- pairs[pairs$Var1 %in% genes_range1.5$ensembl_gene_id & pairs$Var2 %in% 
 cpm_all_wide <- cpm_all_long %>% select(SampleID, ensembl_gene_id, log_cpm) %>% 
   pivot_wider(names_from = ensembl_gene_id, values_from = log_cpm) %>% column_to_rownames(var = "SampleID")
 
+```
+
+
+Method when total list of genes is too large to do all against all correlation
+```{r loop genes corr res expr of selected pairs }
 
 #loop over pairs of interest's expression level and calculate correlations (with p-values)
 #loop over pairs of interest's residual levels and calculate correlations (with p-values)
-# cor_subset <- cpm_all_wide
-# 
-# corr_res_expr = data.frame()
-# counter <- 0
-# 
-# for(i in seq(1:length(rownames(pairs)))){
-#   #define genes from one pair at a time
-#   geneX = pairs[i,1]
-#   geneY = pairs[i,2]
-#   
-#   #correlations and p-values: expression
-#   cor_p = cor.test(cor_subset[,geneX], cor_subset[,geneY], conf.level = 0.95)
-#   #correlations and p-values: residuals
-#   cor_res_p = cor.test(res_poly_all_df[geneX,], res_poly_all_df[geneY,], conf.level = 0.95)
-#   
-#   corr_res_expr = rbind(corr_res_expr, cbind(cor_p$estimate, cor_p$p.value, cor_res_p$estimate, cor_res_p$p.value))
-#  
-#   counter <- counter + 1; 
-#                   if(counter %in% seq(0, length(rownames(pairs)), round(length(rownames(pairs))/10))) 
-#                       print(paste(round(counter/length(rownames(pairs))*100), "% has been processed"))
-#   }
-#   
-# 
-# 
-# names(corr_res_expr)[1] <- "corr_expr"
-# names(corr_res_expr)[2] <- "p_expr"
-# names(corr_res_expr)[3] <- "corr_res"
-# names(corr_res_expr)[4] <- "p_res"
-# corr_res_expr$geneX = pairs[,1]
-# corr_res_expr$geneY = pairs[,2]
+cor_subset <- cpm_all_wide[, colnames(cpm_all_wide) %in% c(pairs[,1], pairs[,2]) ]
+
+corr_res_expr = data.frame()
+counter <- 0
+
+for(i in seq(1:length(rownames(pairs)))){
+  #define genes from one pair at a time
+  geneX = pairs[i,1]
+  geneY = pairs[i,2]
+
+  #correlations and p-values: expression
+  cor_p = cor.test(cor_subset[,geneX], cor_subset[,geneY], conf.level = 0.95)
+  #correlations and p-values: residuals
+  cor_res_p = cor.test(res_poly_all_df[geneX,], res_poly_all_df[geneY,], conf.level = 0.95)
+
+  corr_res_expr = rbind(corr_res_expr, cbind(cor_p$estimate, cor_p$p.value, cor_res_p$estimate, cor_res_p$p.value))
+
+  counter <- counter + 1;
+                  if(counter %in% seq(0, length(rownames(pairs)), round(length(rownames(pairs))/10)))
+                      print(paste(round(counter/length(rownames(pairs))*100), "% has been processed"))
+  }
+
 # 
 # 
-# corr_res_expr <- 
-#   as_tibble(corr_res_expr) %>% 
-#   select(geneX, geneY, corr_expr, p_expr, corr_res, p_res )
+names(corr_res_expr)[1] <- "corr_expr"
+names(corr_res_expr)[2] <- "p_expr"
+names(corr_res_expr)[3] <- "corr_res"
+names(corr_res_expr)[4] <- "p_res"
+corr_res_expr$geneX = pairs[,1]
+corr_res_expr$geneY = pairs[,2]
+
+
+corr_res_expr <-
+  as_tibble(corr_res_expr) %>%
+  select(geneX, geneY, corr_expr, p_expr, corr_res, p_res )
+
+
+```
+
+
+Method when total list of genes is small enough to do all against all correlation
+```{r compute corr res expr for all pairs of genes}
 
 #If n genes <2000, it is possible to get correlations from all, and afterwards pick out the ones we're interested in.
 
@@ -1264,14 +1329,20 @@ corr_res_expr <-
   left_join(p_res_long, join_by(geneX, geneY)) %>% 
   filter(geneX != geneY) #remove self-self correlations
 
+```
 
+
+Genes with opposite linear trend (and crossing expression trend lines)
+```{r opposite linear }
 ##start here with gene pair selection 
 
 #add gene symbol
 corr_res_expr <- 
   corr_res_expr %>% 
-  left_join(select(genemap2, ensembl_gene_id, external_gene_name), by= c("geneX"= "ensembl_gene_id" )) %>% rename("gene_name_X" = external_gene_name) %>% 
-    left_join(select(genemap2, ensembl_gene_id, external_gene_name), by= c("geneY"= "ensembl_gene_id" )) %>% rename("gene_name_Y" = external_gene_name)
+  left_join(select(genemap, ensembl_gene_id, external_gene_name), by= c("geneX"= "ensembl_gene_id" )) %>% 
+  rename("gene_name_X" = external_gene_name) %>% 
+    left_join(select(genemap, ensembl_gene_id, external_gene_name), by= c("geneY"= "ensembl_gene_id" )) %>% 
+  rename("gene_name_Y" = external_gene_name)
 
 #if relevant, add both genes' linear age-coefficient
 corr_res_expr <- 
@@ -1283,7 +1354,7 @@ corr_res_expr <-
   corr_res_expr %>% 
   left_join(select(age_trend_genes_linear_adj, ensembl_gene_id, lin_coeff), by= c("geneY" = "ensembl_gene_id")) %>%
   dplyr::rename("geneY_lin_coeff" = lin_coeff)
-  
+
 #only keep gene pairs with opposite coefficients
 corr_res_expr <- 
   corr_res_expr %>% 
@@ -1342,6 +1413,12 @@ corr_res_expr <- corr_res_expr_intersect %>% filter(intersect_in_range == TRUE)
 #adjust p-values for multiple testing (FDR)
 corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_res", output.col = "p_res_adj", method = "fdr")
 corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_expr", output.col = "p_expr_adj", method = "fdr")
+
+
+corr_res_expr <- 
+  corr_res_expr %>% 
+  left_join(pairs_GO_equal, by= c("geneX" = "Var1", "geneY" = "Var2"))
+
 
 p_thr = 0.01
 cor_thr = 0.5
@@ -1413,7 +1490,7 @@ max_n <- max(hist(corr_res_expr_cat$corr_expr[corr_res_expr_cat$cat == max_cat$c
   ylab("count: gene pairs")
   
 #2D plot of the 2 correlation measures' p-values
-#transform p-value on a log scale, sign according to positive or nefgative correlation
+#transform p-value on a log scale, sign according to positive or negative correlation
 corr_res_expr_cat <- corr_res_expr_cat %>% 
   mutate(log_p_expr_cor= -log(p_expr) * sign(corr_expr )) %>% 
   mutate(log_p_res_cor= -log(p_res) * sign(corr_res ))
@@ -1431,7 +1508,7 @@ ggplot() +
 
 #corr_res_expr_cat %>% 
 #  pivot_longer(cols= c(corr_expr, corr_res), names_to = "cor_source", values_to = "cor") 
-#c <- "neg_expr_neg_res"
+c <- "neg_expr_neg_res"
   
 plotlist <- list()
 
@@ -1504,6 +1581,49 @@ write_tsv(corr_res_expr_cat, file = paste0(res_dir, "corr_res_expr_cat.txt"))
 #write.csv(corr_res_expr_cat, file = paste0(res_dir, "corr_res_expr_cat.txt"), sep  = "\t")
 ```
 
+```{r GOterms when both genes in pairs have the same}
+
+
+
+#visualise examples
+#visualise gene expression of negatively correlated pairs
+visualise_expr <-  cpm_all_long %>%
+mutate(pair = case_when(
+ensembl_gene_id  %in% corr_res_expr_vis[1, 1:2] ~ "1",
+ensembl_gene_id  %in% corr_res_expr_vis[2, 1:2] ~ "2",
+ensembl_gene_id  %in% corr_res_expr_vis[3, 1:2] ~ "3",
+ensembl_gene_id  %in% corr_res_expr_vis[4, 1:2] ~ "4",
+TRUE ~ NA)) %>%
+drop_na()
+
+#define correct label order
+vis_genes <- visualise_expr %>%
+  arrange(pair) %>%
+  select(gene_id, pair) %>%
+  distinct() %>% select(gene_id)
+  
+vis_genes <- factor(vis_genes$gene_id, levels = vis_genes$gene_id)
+
+#add in p-value of the coefficient on the linear age variable
+visualise_expr <-
+  visualise_expr %>%
+  left_join(select(poly_coeff_pvalue_df, `poly(AGE, 2)1`, ensembl_gene_id), by="ensembl_gene_id")
+
+#plot
+plot <- 
+  visualise_expr %>%
+  ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+  geom_point()+
+  facet_wrap(~pair, scales = "free_y") +
+  geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE) +
+  scale_colour_brewer(breaks= vis_genes, palette = "Dark2" ) +
+
+
+corr_res_expr_vis %>%   
+  distinct() %>% head(n=4) %>% 
+  left_join(select(pairs_GO_equal, Var1, Var2, GO, Term), by = c("geneX" = "Var1", "geneY" = "Var2")) %>%    select(21:24)
+
+```
 
 
 ```{r correlation residuals and expression in paralog pairs}
@@ -1718,7 +1838,7 @@ gene <- low_OFC_FDR_001$ensembl_gene_id
 #Genes with significant age-coefficient
 gene <- age_trend_genes_linear$ensembl_gene_id
  analysis <- "age_trend_genes_OFC"
- analysis <- "age_trend_genes_CC"
+ #analysis <- "age_trend_genes_CC"
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
 #gene <- rownames(res[res$adj.P.Val < 0.05,])
@@ -1729,7 +1849,7 @@ neg_corr_gene_pairs <-
   filter(cat == "neg_expr_neg_res") %>% 
   select(geneX, geneY) 
 
-gene <- unique(genemap2$ensembl_gene_id[genemap2$ensembl_gene_id %in% corr_res_expr_neg$geneX | genemap2$ensembl_gene_id %in% corr_res_expr_neg$geneY])
+gene <- unique(genemap2$ensembl_gene_id[genemap2$ensembl_gene_id %in% neg_corr_gene_pairs$geneX | genemap2$ensembl_gene_id %in% neg_corr_gene_pairs$geneY])
 
 
 
@@ -1762,29 +1882,8 @@ ego_simple <- clusterProfiler::simplify(
   semData = NULL
   )
 
-dotplot(ego_simple, showCategory=30)
+clusterProfiler::dotplot(ego_simple, showCategory=30)
 
-#metod using ranked gene lists. But can't input universe (all relevant genes)? IA: ok to include all genes in database.
-age_trend_genes_linear_adj -> df
-df <- subset(df,p<0.01)
-geneList <- c(abs(df$lin_coeff)) #Do not use absolute if you want to 
-names(geneList) <- df$ensembl_gene_id
-geneList <- sort(geneList, decreasing =T)
-
-gse <- gseGO(
-  geneList = geneList,
-  ont = "BP",
-  OrgDb = org.Hs.eg.db,
-  keyType = "ENSEMBL",
- # exponent = 1,
- # minGSSize = 10,
- # maxGSSize = 500,
-  #eps = 1e-10,
-  pvalueCutoff = 0.1,
-  pAdjustMethod = "BH", scoreType= "pos",
-  verbose = TRUE,
-  by = "fgsea"
-  )
 
 #reduce GO-terms by adding the parent term
 #convert to dataframe and score GO-terms
@@ -1843,7 +1942,7 @@ totalGenes <- length(unique(gene))
     viridis::scale_color_viridis() +
     theme(axis.text = element_text(size=8)) +
     labs(colour= "min. p.adjust", 
-         x= "Total ratio of GO-assoc. genes",
+         x= "GeneRatio: genes in GO parent term/ total genes of interest in GO-terms",
          y= "GO parentTerm"
          )
   
@@ -1861,6 +1960,122 @@ totalGenes <- length(unique(gene))
 
  
  
+```
+
+```{r gene set enrichment of ranked linear coefficients }
+#analysis <- "age_trend_genes_CC/ranked_linear"
+
+analysis <- "age_trend_genes_OFC/ranked_linear"
+age_trend_genes_linear_adj <- read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt"  )
+
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+
+#metod using ranked gene lists. But can't input universe (all relevant genes)? IA: ok to include all genes in database.
+ linear_nom <- 
+  age_trend_genes_linear_adj %>% 
+  filter(p< sig_level)
+
+ 
+geneList <- c(
+ # abs(
+    linear_nom$lin_coeff)
+ # ) #Do not use absolute if you want to separate negative from positive trend (i.e. scoreType= "std") 
+#Experiance: When absolute(lin_coeff) and "scoreType= "pos"" is used, we get no significant enrichment
+
+names(geneList) <- linear_nom$ensembl_gene_id
+geneList <- sort(geneList, decreasing =T)
+
+gse <- gseGO(
+  geneList = geneList,
+  ont = "BP",
+  OrgDb = org.Hs.eg.db,
+  keyType = "ENSEMBL",
+  exponent = 1,
+  minGSSize = 10,
+  maxGSSize = 500,
+  eps = 1e-10,
+  pvalueCutoff = 0.1,
+  pAdjustMethod = "BH", scoreType= "std",
+  verbose = TRUE,
+  by = "fgsea"
+  )
+#The geneRatio in gseGO results is calculated by dotplot. The calculation method is :
+#(count of core enrichment genes) / (count of pathway genes) . https://github.com/YuLab-SMU/clusterProfiler/issues/364
+#-> so, this is different from the GeneRatio that is calculated in the enrichGO-method
+
+dotplot(gse, showCategory=30)
+GO_dotplot <- dotplot(gse, showCategory=30 )
+ 
+#reduce GO-terms by adding the parent term
+#convert to dataframe and score GO-terms
+  simMatrix <- calculateSimMatrix(gse$ID, orgdb="org.Hs.eg.db", ont="BP", method="Rel")
+  scores <- setNames(-log10(gse$p.adjust), gse$ID)
+  red <- reduceSimMatrix(simMatrix, scores, threshold=0.7, orgdb="org.Hs.eg.db")
+
+#merge parentTerms with the original GO-result 
+  gse_red_df <- merge(base::as.data.frame(gse@result), base::as.data.frame(red), by=0)
+
+#find the most significant member of a parentTerm  
+  gse_red_sign <- gse_red_df  %>% 
+    filter( p.adjust < 0.1) %>% 
+    arrange(p.adjust) %>%  
+    group_by(parentTerm) %>% 
+    dplyr::mutate(sum_size= sum(size)) %>%  
+    slice_min(p.adjust)
+
+#count genes per parentTerm
+ count_genes_parentTermGO <-  
+   gse_red_df %>% 
+    separate_wider_delim(cols = core_enrichment, 
+                         delim= "/", 
+                         names_sep = "", 
+                         too_few = "align_start") %>% 
+    pivot_longer(cols = starts_with("core_enrichment"), 
+                 names_to = "geneID_place", 
+                 values_to = "geneID") %>% 
+    select(parentTerm, geneID) %>%  
+    drop_na(geneID) %>% distinct()  %>% 
+    dplyr::group_by(parentTerm) %>% count(parentTerm) %>% arrange(desc(n))
+
+#count total unique genes associated with a parentTerm
+total_genes_parentTerm <- gse_red_df %>% 
+  separate_wider_delim(cols = core_enrichment, delim= "/", names_sep = "", too_few = "align_start") %>%
+  pivot_longer(cols = starts_with("core_enrichment"), names_to = "geneID_place", values_to = "geneID") %>%
+  select(parentTerm, geneID) %>%  
+  drop_na(geneID) %>% 
+  select(geneID) %>% distinct() %>%  
+  nrow()  
+
+#insert total unique gene count per parentTerm
+#actually, GeneRatio is ususally the percentage of total genes of interest in the given GO term 
+gse_red_sign_total <-
+  gse_red_sign %>% 
+  left_join(count_genes_parentTermGO, by= "parentTerm")
+
+totalGenes <- length(unique(gene))
+
+#plot enriched GO parent terms  
+  parentGO_plot <- 
+    ggplot(gse_red_sign_total, 
+         aes(x=n/totalGenes, y=reorder(parentTerm, n, FUN=mean))
+         ) + 
+    geom_point(aes(colour= p.adjust, size= n)) + 
+    viridis::scale_color_viridis() +
+    theme(axis.text = element_text(size=8)) +
+    labs(colour= "min. p.adjust", 
+         x= "GeneRatio: genes in GO parent term/ total genes of interest in GO-terms",
+         y= "GO parentTerm"
+         )
+  
+ ggsave(parentGO_plot, file = paste0(res_dir, "/plot_parentGOenrich.pdf" ),
+        #height = length(gse_red_sign$ID)/3, 
+        height= 12,
+        width= 18, units = "cm")  
+  
+ ggsave(GO_dotplot, file = paste0(res_dir, "/plot_GOenrich.pdf" ))  
+ 
+ write_tsv(gse_red_sign_total, file = paste0(res_dir, "gse_parent_linear_coeff.txt"))
+
 ```
 
 
