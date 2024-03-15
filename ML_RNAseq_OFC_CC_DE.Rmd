@@ -28,6 +28,8 @@ filter <- dplyr::filter
 relocate <- dplyr::relocate
 colnames <- base::colnames
 rownames <- base::rownames
+
+#I have suggested using blue (#E64B35FF) and red (#8491B4FF) whenever we do a direct comprison between CC and OFC
 ```
 
 
@@ -751,6 +753,23 @@ write_tsv(select(cpm_all_long, -CDEATHOFF), file = paste0(res_dir, "cpm_all_long
 #GLRA2/GLRA3
 #HTR1A/ HTR5A
 
+gene_pair <- c("GRIA1", "GRIA2")
+gene_pair <- c("GRIA4", "GRIA2")
+gene_pair <- c("GRIN2A", "GRIN2B")
+
+gene_pair <- c("SNAP23", "SNAP25")
+
+  cpm_all_long %>% 
+    filter(gene_id %in% gene_pair) %>% 
+#      filter(gene_id %in% c("GLRA2", "GLRA3")) %>% 
+#        filter(gene_id %in% c("HTR1A", "HTR5A")) %>% 
+#  filter(gene_id %in% c("GABRA3", "GABRA6")) %>% 
+    ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+  geom_point()+
+  geom_smooth(se = FALSE) +
+        scale_colour_manual(values=col[c(1,6)])
+
+
   cpm_all_long %>% 
     filter(gene_id %in% c("GRIN2A", "GRIN2B")) %>% 
 #      filter(gene_id %in% c("GLRA2", "GLRA3")) %>% 
@@ -761,8 +780,18 @@ write_tsv(select(cpm_all_long, -CDEATHOFF), file = paste0(res_dir, "cpm_all_long
   geom_smooth(se = FALSE) +
         scale_colour_manual(values=col[c(1,6)])
 
+```
+
+```{r import age expression data from Berchtold 2013}
+install.packages("pdftools") #tool to scrape data from pdfs
+library(pdftools)
+
+#none of these work for this data. Must probably copy into excel, before import. 
+#berchtold_tableS5 <- pdf_text("/Users/asbjorh/Downloads/1-s2.0-S0197458012006124-mmc5.pdf")
+#berchtold_tableS5 <- PDE::PDE_analyzer("/Users/asbjorh/Downloads/1-s2.0-S0197458012006124-mmc5.pdf")
 
 ```
+
 
 
 ```{r find neuronal function genes}
@@ -995,6 +1024,7 @@ res_poly_all <- list()
 models_poly_all <- list() 
 poly_coeff_pvalue <- list()
 lin_coeff_value <- list()
+counter <- 0
 
 for(gene in cor_subset_genes){
   test_gene <- cpm_all_long %>%
@@ -1009,6 +1039,10 @@ for(gene in cor_subset_genes){
   models_poly_all[[gene]] <- poly_mod
   poly_coeff_pvalue[[gene]] <- summary(poly_mod)$coefficients[,4]
   lin_coeff_value[[gene]] <- poly_mod$coefficients[2]
+  
+  counter <- counter + 1;
+                  if(counter %in% seq(0, length(cor_subset_genes), round(length(cor_subset_genes))/10))
+                      print(paste(round(counter/length(cor_subset_genes))*100), "% has been processed")
 }
 
 res_poly_all_df <-  do.call("rbind", res_poly_all)
@@ -1077,7 +1111,6 @@ write.csv(res_poly_all_df, file = paste0(res_dir, "/res_poly_all_df.txt" ))
 
 Investigate correlation pairs where genes have the same GO-annotation
 ```{r create table of GO-terms}
-GOall <- AnnotationDbi::select(org.Hs.eg.db, columns = c("ENSEMBL" , "SYMBOL" , "GO" , "GOALL"), keys= unique(age_trend_genes_linear_adj$ensembl_gene_id), keytype = "ENSEMBL") 
 
 GOall <- AnnotationDbi::select(org.Hs.eg.db, columns = c("ENSEMBL" , "SYMBOL" , "GO"), keys= unique(age_trend_genes_linear_adj$ensembl_gene_id), keytype = "ENSEMBL") 
 
@@ -1114,11 +1147,6 @@ GO_enrich <-
 
 ego@result %>% filter(p.adjust < sig_level) %>% filter(ID %in% gse@result$ID[gse@result$p.adjust < sig_level]) %>% dim()
 
-
-
-
-
-
 ```
 
 
@@ -1140,7 +1168,7 @@ ego@result %>% filter(p.adjust < sig_level) %>% filter(ID %in% gse@result$ID[gse
 #cpm_all_long <- cpm_all_long_CC
 
 
-coeff_min <- 2 #the minimum linear coefficient included in the analysis
+coeff_min <- 0#the minimum linear coefficient included in the analysis
 sig_level <- 0.01
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
@@ -1191,13 +1219,13 @@ library(AnnotationDbi)
 pos_linear <- 
   age_trend_genes_linear_adj %>% 
   select(-p) %>% 
-  filter(p_linear_adj > sig_level & lin_coeff >0) %>% 
+  filter(p_linear_adj < sig_level & lin_coeff >0) %>% 
   filter(abs(lin_coeff) >= coeff_min)
   
 neg_linear <- 
   age_trend_genes_linear_adj %>% 
   select(-p) %>% 
-  filter(p_linear_adj > sig_level & lin_coeff <0)  %>% 
+  filter(p_linear_adj < sig_level & lin_coeff <0)  %>% 
   filter(abs(lin_coeff) >= coeff_min)
 
 pairs <- expand.grid(pos_linear$ensembl_gene_id, neg_linear$ensembl_gene_id) #Create a data frame from all combinations of the 
@@ -1222,12 +1250,15 @@ cpm_all_wide <- cpm_all_long %>% select(SampleID, ensembl_gene_id, log_cpm) %>%
 
 Method when total list of genes is too large to do all against all correlation
 ```{r loop genes corr res expr of selected pairs }
+pairs <- pairs_GO_equal %>% 
+  select(Var1, Var2) %>% 
+  distinct()
 
 #loop over pairs of interest's expression level and calculate correlations (with p-values)
 #loop over pairs of interest's residual levels and calculate correlations (with p-values)
 cor_subset <- cpm_all_wide[, colnames(cpm_all_wide) %in% c(pairs[,1], pairs[,2]) ]
 
-corr_res_expr = data.frame()
+corr_res_expr_loop = data.frame()
 counter <- 0
 
 for(i in seq(1:length(rownames(pairs)))){
@@ -1240,7 +1271,7 @@ for(i in seq(1:length(rownames(pairs)))){
   #correlations and p-values: residuals
   cor_res_p = cor.test(res_poly_all_df[geneX,], res_poly_all_df[geneY,], conf.level = 0.95)
 
-  corr_res_expr = rbind(corr_res_expr, cbind(cor_p$estimate, cor_p$p.value, cor_res_p$estimate, cor_res_p$p.value))
+  corr_res_expr_loop = rbind(corr_res_expr_loop, cbind(cor_p$estimate, cor_p$p.value, cor_res_p$estimate, cor_res_p$p.value, geneX, geneY))
 
   counter <- counter + 1;
                   if(counter %in% seq(0, length(rownames(pairs)), round(length(rownames(pairs))/10)))
@@ -1249,17 +1280,21 @@ for(i in seq(1:length(rownames(pairs)))){
 
 # 
 # 
-names(corr_res_expr)[1] <- "corr_expr"
-names(corr_res_expr)[2] <- "p_expr"
-names(corr_res_expr)[3] <- "corr_res"
-names(corr_res_expr)[4] <- "p_res"
-corr_res_expr$geneX = pairs[,1]
-corr_res_expr$geneY = pairs[,2]
-
+names(corr_res_expr_loop)[1] <- "corr_expr"
+names(corr_res_expr_loop)[2] <- "p_expr"
+names(corr_res_expr_loop)[3] <- "corr_res"
+names(corr_res_expr_loop)[4] <- "p_res"
+names(corr_res_expr_loop)[5] <- "geneX"
+names(corr_res_expr_loop)[6] <- "geneY"
 
 corr_res_expr <-
-  as_tibble(corr_res_expr) %>%
-  select(geneX, geneY, corr_expr, p_expr, corr_res, p_res )
+  as_tibble(corr_res_expr_loop) %>%
+  select(geneX, geneY, corr_expr, p_expr, corr_res, p_res ) %>% 
+  distinct()
+
+#adjust p-values for multiple testing (FDR)
+corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_res", output.col = "p_res_adj", method = "fdr")
+corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_expr", output.col = "p_expr_adj", method = "fdr")
 
 
 ```
@@ -1272,13 +1307,15 @@ Method when total list of genes is small enough to do all against all correlatio
 
 cor_subset <- cpm_all_wide[, colnames(cpm_all_wide) %in% pos_linear$ensembl_gene_id | colnames(cpm_all_wide) %in% neg_linear$ensembl_gene_id]
 
+#set.seed(22)
+#random300 <- cpm_all_wide[, sample(colnames(cpm_all_wide), 300, replace=F)]
+#cor_subset <- random300
 
 # 3. find correlation value and p for each pairs of expression
 M = cor(cor_subset)
 M[lower.tri(M)] <- NA #removes the reverse correlation
 
 Mexpr = cor.mtest(cor_subset, conf.level = 0.95)
-Mexpr[lower.tri(Mexpr)] <- NA #removes the reverse correlation
 Mexpr$p[lower.tri(Mexpr$p)] <- NA #removes the reverse correlation
 Mexpr_p <- as.data.frame(Mexpr$p)
 
@@ -1329,6 +1366,11 @@ corr_res_expr <-
   left_join(p_res_long, join_by(geneX, geneY)) %>% 
   filter(geneX != geneY) #remove self-self correlations
 
+#adjust p-values for multiple testing (FDR)
+corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_res", output.col = "p_res_adj", method = "fdr")
+corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_expr", output.col = "p_expr_adj", method = "fdr")
+
+
 ```
 
 
@@ -1344,22 +1386,33 @@ corr_res_expr <-
     left_join(select(genemap, ensembl_gene_id, external_gene_name), by= c("geneY"= "ensembl_gene_id" )) %>% 
   rename("gene_name_Y" = external_gene_name)
 
-#if relevant, add both genes' linear age-coefficient
+#if relevant, add both genes' linear age-coefficient and their p-value
 corr_res_expr <- 
   corr_res_expr %>% 
-  left_join(select(age_trend_genes_linear_adj, ensembl_gene_id, lin_coeff), by= c("geneX" = "ensembl_gene_id")) %>%
-  dplyr::rename("geneX_lin_coeff" = lin_coeff)
+  left_join(select(age_trend_genes_linear_adj, ensembl_gene_id, lin_coeff, p_linear_adj), by= c("geneX" = "ensembl_gene_id")) %>%
+  dplyr::rename("geneX_lin_coeff" = lin_coeff, "geneX_lin_p_adj" = p_linear_adj)
   
 corr_res_expr <- 
   corr_res_expr %>% 
-  left_join(select(age_trend_genes_linear_adj, ensembl_gene_id, lin_coeff), by= c("geneY" = "ensembl_gene_id")) %>%
-  dplyr::rename("geneY_lin_coeff" = lin_coeff)
+  left_join(select(age_trend_genes_linear_adj, ensembl_gene_id, lin_coeff, p_linear_adj), by= c("geneY" = "ensembl_gene_id")) %>%
+  dplyr::rename("geneY_lin_coeff" = lin_coeff, "geneY_lin_p_adj" = p_linear_adj)
 
 #only keep gene pairs with opposite coefficients
 corr_res_expr <- 
   corr_res_expr %>% 
   filter(sign(geneX_lin_coeff) != sign(geneY_lin_coeff)) 
   
+#only keep genes where residuals are significantly negative (p.adj)
+corr_res_expr <- 
+  corr_res_expr %>% 
+  filter(p_res_adj <= sig_level)
+
+#only keep genes where both members of pair have a certain range
+corr_res_expr <- 
+  corr_res_expr %>% 
+  filter(geneX %in% genes_range1.5$ensembl_gene_id & 
+           geneY %in% genes_range1.5$ensembl_gene_id)
+
 #IA's idea: only keep gene pairs that have their fitted line cross each other
 #linear slope and intercept
 linear_slope_intrcpt <- cpm_all_long %>%     
@@ -1408,16 +1461,26 @@ corr_res_expr_intersect <-
          FALSE
          )) 
 
+
+#visualise intersection points (age)
+corr_res_expr_intersect %>% 
+  filter(intersect_in_range ==TRUE) %>% 
+  ggplot(aes(x= intersect_x, y=intersect_y )) +
+  geom_bin_2d() +
+  geom_vline(xintercept = low_age) +
+  geom_vline(xintercept = high_age) 
+
+
 corr_res_expr <- corr_res_expr_intersect %>% filter(intersect_in_range == TRUE)
 
-#adjust p-values for multiple testing (FDR)
-corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_res", output.col = "p_res_adj", method = "fdr")
-corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_expr", output.col = "p_expr_adj", method = "fdr")
 
-
-corr_res_expr <- 
+corr_res_expr_GO_equal <- 
   corr_res_expr %>% 
-  left_join(pairs_GO_equal, by= c("geneX" = "Var1", "geneY" = "Var2"))
+  left_join(pairs_GO_equal, by= c("geneX" = "Var1", "geneY" = "Var2")) %>% 
+  drop_na()
+
+#visualise GO-terms' p-value of 
+
 
 
 p_thr = 0.01
@@ -1516,7 +1579,7 @@ for(c in c("neg_expr_neg_res", "pos_expr_pos_res", "neg_expr_notsign_res", "neg_
 
 corr_res_expr_vis <- 
   corr_res_expr_cat %>%  
-  filter(cat==c) %>% 
+ filter(cat==c) %>% 
   filter(geneX %in% age_trend_genes$ensembl_gene_id & 
            geneY %in% age_trend_genes$ensembl_gene_id) %>% 
   pivot_longer(cols = c(gene_name_X, gene_name_Y), names_to = "pair_member", values_to = "gene_name") %>% #one gene per row
@@ -2174,6 +2237,12 @@ ggsave(plot = expr_age_GWAS_l2g_OFC,
   
 ```
 
+```{r GWAS overlap SCZ}
+SCZ_GWAS_100kb <- read_tsv("~/PhD/RNAseq_temporal/genes_of_interest/SCZ_genes_biomart.txt")
+
+
+
+```
 
 
 ```{r myelination genes}
