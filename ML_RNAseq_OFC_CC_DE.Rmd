@@ -212,6 +212,26 @@ d <-
 ```
 
 
+```{r qc reads}
+
+reads_OFC <- read_tsv("/Users/asbjorh/PhD/RNAseq_temporal/data/OFC/Hughes-RNA5-2020-07-07_reads_OFC.csv")
+reads_OFC$`% Dups` <- str_remove_all(string = reads_OFC$`% Dups`, pattern = "%")
+reads_OFC$`% GC` <- str_remove_all(string = reads_OFC$`% GC`, pattern = "%")
+reads_OFC$`Sample Name` <- str_remove_all(string = reads_OFC$`Sample Name`, pattern = "-BA11_clean")
+reads_OFC %>% separate(`Sample Name`, sep = "_", into = c("Sample", "read")) %>% filter(read== "1P") %>% mutate(sampleID = paste0(Sample, "-", "OFC")) %>% right_join(info_OFC, by= "sampleID") %>% dplyr::summarise(median_reads= median(`M Seqs`))
+
+
+
+reads_CC <- read_tsv("/Users/asbjorh/PhD/RNAseq_temporal/data/CC/Hughes-RNA6-2021-12-08/Hughes-RNA6-2021-12-08_reads_OFC.txt")
+reads_CC <- reads_CC %>% select(-`% Failed`)
+reads_CC$`% Dups` <- str_remove_all(string = reads_CC$`% Dups`, pattern = " %")
+reads_CC$`% GC` <- str_remove_all(string = reads_CC$`% GC`, pattern = " %")
+
+reads_CC <- reads_CC %>% separate(`Sample Name`, into = c("SampleNumber", "RNAid"), sep = "-") %>% separate(`RNAid`, into = c("sampleID", "lane", "read", "end"), sep = "_") %>% select(-c(SampleNumber, lane, end)) %>% mutate(sampleID = paste0(sampleID, "-", "CC"))
+reads_CC %>% right_join(info_CC, by= "sampleID") %>%  
+  summarise(reads= median(`M Seqs`))
+
+```
 
 
 ```{r Process data}
