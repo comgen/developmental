@@ -107,7 +107,7 @@ info_OFC <-
 info_OFC$below12 <- as.factor(info_OFC$below12)
 ```
 
-
+### Import count data from FeatureCounts
 
 ```{r import counts CC}
 #f = list.files("/Users/asbjorh/PhD/RNAseq_temporal/data/CC/Hughes-RNA6-2021-12-08/20_mapDataRSEM/",  pattern= ".genes.results$", full.names  = TRUE) #results from RSEM
@@ -211,7 +211,7 @@ d <-
 
 ```
 
-
+Add on number of reads per sample
 ```{r qc reads}
 
 reads_OFC <- read_tsv("/Users/asbjorh/PhD/RNAseq_temporal/data/OFC/Hughes-RNA5-2020-07-07_reads_OFC.csv")
@@ -233,7 +233,7 @@ reads_CC %>% right_join(info_CC, by= "sampleID") %>%
 
 ```
 
-
+Convert ensembl gene names to symbol
 ```{r Process data}
 #clinMeta <- info_CC
 clinMeta <- info_OFC
@@ -267,8 +267,8 @@ ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="https://use
 
 genemap <- getBM(attributes=c("entrezgene_id","ensembl_gene_id", "external_gene_name", "gene_biotype", "go_id", "name_1006", "chromosome_name", "start_position", "end_position"), 
                  filters="ensembl_gene_id", 
-	#values=rownames(data), 
-	values=colnames(cpm_all_wide),
+	values=rownames(data), 
+	#values=colnames(cpm_all_wide),
 	mart=ensembl)
 genemap <- genemap[ duplicated(genemap$ensembl_gene_id) == F,]
 rownames(genemap) <- genemap$ensembl_gene_id #rownames in case dataframe is needed
@@ -288,10 +288,11 @@ genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding","lncRNA"))
 data.filt <- data.filt[rownames(genemap2),]
 ```
 
+### Differential expression analysis
 
 ```{r DE analyses childhood vs adolescence}
-#analysis <- "CC_DE_below12"
-analysis <- "OFC_DE_below12"
+analysis <- "CC_DE_below12"
+#analysis <- "OFC_DE_below12"
 sig_level <- 0.01
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis)
@@ -630,6 +631,8 @@ ggsave(plot_expr_highCC, file = paste0(res_dir, "/plot_expr_top10sign_highCC.pdf
 
 ```
 
+
+Are there more variance in lower ages, i.e. need for stricter balance in adolescence?
 ```{r variance in age groups}
 library(rstatix)
 
@@ -761,6 +764,8 @@ ggsave(sd_diff_GO, file = paste0(res_dir, "sd_diff_GO_expr.pdf"))
 write_tsv(select(cpm_all_long, -CDEATHOFF), file = paste0(res_dir, "cpm_all_long.txt") )
 ```
 
+
+### Gene pairs that can be biological switches
 ```{r pairs of switches}
 #Kang et al
 #IGF2 in fig 2c
@@ -812,8 +817,7 @@ library(pdftools)
 
 ```
 
-
-
+Gene subset: neuronal function (KEGG)
 ```{r find neuronal function genes}
 
 analysis <- "switches/OFC"
@@ -887,7 +891,7 @@ hsa_path_eg <-
 
 ```
 
-
+Gene subset: paralog pairs
 ```{r find paralog gene pairs}
 #of neuro-KEGG genes, find paralogs
 paralogs_neuro <- getBM(
@@ -942,6 +946,8 @@ paralogs_neuro_sim <-
   filter(paralogs_neuro_sim, external_gene_name %in% genes_range1.5$gene_id)
 ```
 
+
+Correlation in expression: find gene pairs with opposite deviation from trendline: more likely to be molecular switch
 ```{r correlation in expression}
 #Simple method: find pearson correlation of pairs, and look for negatively correlated expression
 
@@ -1019,7 +1025,7 @@ neg_corr_membrane <- cor_paralogs_neuro_sim %>%
 ```
 
 
-
+Gene subset: genes with changes in expression from early childhood to adulthood
 ```{r age trend significant coefficient}
 analysis <- "age_trend_genes_OFC"
 cpm_all_long <- cpm_all_long_OFC
@@ -1182,7 +1188,7 @@ ego@result %>% filter(p.adjust < sig_level) %>% filter(ID %in% gse@result$ID[gse
 
 #analysis <- "switches/opposite_linear/CC"
 #cpm_all_long_CC <- 
- # read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_CC.txt" )
+#  read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_CC.txt" )
 #age_trend_genes_linear_adj <-
  # read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt")
 #cpm_all_long <- cpm_all_long_CC
@@ -1320,7 +1326,7 @@ corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_expr", output.col = "p_
 ```
 
 
-Method when total list of genes is small enough to do all against all correlation
+Method when total list of genes is small enough to do all against all correlation (and remove irrelevant gene pairs afterwards)
 ```{r compute corr res expr for all pairs of genes}
 
 #If n genes <2000, it is possible to get correlations from all, and afterwards pick out the ones we're interested in.
@@ -1883,7 +1889,7 @@ pos = visualise_expr %>% group_by(pair) %>%
 ```
 
 
-
+###Start enrichment analysis of gene sets 
 
 ```{r enrichment analysis}
 library(org.Hs.eg.db)
@@ -2162,8 +2168,11 @@ totalGenes <- length(unique(gene))
 ```
 
 
-
+###Overlap with disease-associated genes?
 ```{r GWAS overlap BD}
+age_trend_genes_linear_adj_CC <- 
+ read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt")
+
 BD_GWAS_100kb <- read_tsv("~/PhD/GWAS-BD/PGC3/PGC3_loci_genes_100kb.txt")
 BD_GWAS_snp_pos <- read_tsv("~/PhD/GWAS-BD/PGC3/PGC3_loci_GRCh38.txt")
 
@@ -2209,7 +2218,7 @@ expr_age_GWAS_l2g_CC <-
     geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE) 
 
 #genes with linear age trend within 100kb from GWAS loci OFC
-age_trend_genes_linear_adj_OFC <- read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes/age_trend_linear.txt")
+age_trend_genes_linear_adj_OFC <- read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt")
 
 age_trend_genes_linear_GWAS_OFC <-   
   BD_GWAS_100kb %>% 
@@ -2243,14 +2252,14 @@ expr_age_GWAS_l2g_OFC <-
 
  
  #save results
- ggsave(plot = expr_age_GWAS_closest_CC, filename = "~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/expr_age_GWAS_closest_CC.pdf")
-  ggsave(plot = expr_age_GWAS_closest_OFC, filename = "~/proj_Maryland_WGCNA/analysis/age_trend_genes/expr_age_GWAS_closest_OFC.pdf")
+# ggsave(plot = expr_age_GWAS_closest_CC, filename = "~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/expr_age_GWAS_closest_CC.pdf")
+ # ggsave(plot = expr_age_GWAS_closest_OFC, filename = "~/proj_Maryland_WGCNA/analysis/age_trend_genes/expr_age_GWAS_closest_OFC.pdf")
 
-ggsave(plot = expr_age_GWAS_l2g_CC, 
-          filename = "~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/expr_age_GWAS_l2g_CC.pdf")
+#ggsave(plot = expr_age_GWAS_l2g_CC, 
+#          filename = "~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/expr_age_GWAS_l2g_CC.pdf")
  
-ggsave(plot = expr_age_GWAS_l2g_OFC, 
-         filename = "~/proj_Maryland_WGCNA/analysis/age_trend_genes/expr_age_GWAS_l2g_OFC.pdf")
+#ggsave(plot = expr_age_GWAS_l2g_OFC, 
+#         filename = "~/proj_Maryland_WGCNA/analysis/age_trend_genes/expr_age_GWAS_l2g_OFC.pdf")
   
   
   
