@@ -29,7 +29,9 @@ relocate <- dplyr::relocate
 colnames <- base::colnames
 rownames <- base::rownames
 
-#I have suggested using blue (#E64B35FF) and red (#8491B4FF) whenever we do a direct comprison between CC and OFC
+col <- c("#3B4992FF", "#EE0000FF", "#D95F02", "#1B9E77", "#440154FF", "#31688EFF", "#35B779FF", "#FDE725FF")
+
+#IA has suggested using blue (#E64B35FF) and red (#8491B4FF) whenever we do a direct comprison between CC and OFC
 ```
 
 
@@ -157,7 +159,7 @@ d <-
  count <- d %>% column_to_rownames(var="X1")
 
  count_CC <- count
-
+rm(count)
 
 #if using RSEM data
 #d$file <- #remove unnescessary prefix text from sample names
@@ -208,7 +210,7 @@ d <-
  colnames(count) <- str_remove(colnames(count),  "-BA11")
  
  count_OFC <- count
-
+rm(count)
 ```
 
 Add on number of reads per sample
@@ -234,13 +236,9 @@ reads_CC %>% right_join(info_CC, by= "sampleID") %>%
 ```
 
 Convert ensembl gene names to symbol
-```{r Process data}
-#clinMeta <- info_CC
-clinMeta <- info_OFC
-
-#
-#count <- count_CC
-count <- count_OFC
+```{r Process data CC}
+clinMeta <- info_CC
+count <- count_CC
 
 # exclude outlier CC_1259 sample
 exclude <- "1259-CC"
@@ -290,12 +288,155 @@ data.filt <- data.filt[rownames(genemap2),]
 
 ### Differential expression analysis
 
-```{r DE analyses childhood vs adolescence}
+```{r DE analyses childhood vs adolescence CC}
 analysis <- "CC_DE_below12"
-#analysis <- "OFC_DE_below12"
 sig_level <- 0.01
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis)
+
+res <- read_tsv(paste0(res_dir, "/de_limma.txt"))
+
+y <- DGEList(counts = data.filt, genes = genemap2, samples=SampleID)
+y <- calcNormFactors(y) #normLibSizes is the new name for calcNormFactors
+
+design <- model.matrix(~ below12  + RIN_AMG + PMINTERVAL, data = colData)
+
+v <- voomWithQualityWeights(y, design, plot = TRUE)
+fit <- lmFit(v, design)
+fit <- eBayes(fit)
+summary(decideTests(fit, p.value=sig_level))
+
+res <- topTable(fit, coef="below121", n=Inf, p.value=1)
+write.table(res, paste0(res_dir, "/de_limma_below12.txt"), sep="\t", row.names=F)
+
+
+table_sign_genes <- summary(decideTests(fit, p.value=sig_level))
+#kableExtra::kable(table_sign_genes, "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
+ # kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
+
+#write.table(res, paste0(res_dir,"_",analysis, "/de_limma.txt"), sep="\t", row.names=F)
+
+
+if(identical(analysis,  "OFC_DE_below12")){
+DE_0.01_OFC <- res %>% filter(adj.P.Val <= 0.01)
+}  
+
+if(identical(analysis,  "CC_DE_below12")){
+  DE_genes_0.01_CC <- res %>% filter(adj.P.Val <= 0.01)
+}  
+
+
+cpm_all <- cpm(y, log=TRUE, prior.count=3) #convert counts to normalised cpm
+
+cpm_all <- cpm_all %>% t() %>% data.frame()     #have genes as columns
+cpm_all_long <- 
+  cpm_all %>%  rownames_to_column(var = "SampleID") %>% 
+  pivot_longer(cols = -1, names_to = "ensembl_gene_id", values_to = "log_cpm")
+
+#change gene name to symbol
+cpm_all_long <- 
+  cpm_all_long %>% 
+  left_join(select(genemap2, ensembl_gene_id, external_gene_name) , by=c("ensembl_gene_id"))  #add in symbol name
+
+cpm_all_long <- 
+  cpm_all_long %>% rename("gene_id" = external_gene_name)
+colData.filt <- subset(colData, rownames(colData) %in% SampleID )
+
+cpm_all_long <- 
+  cpm_all_long %>% 
+  left_join(rownames_to_column(colData.filt, var= "SampleID"), by="SampleID")
+
+cpm_all_long$below12 <- str_replace(cpm_all_long$below12, "1", "<12")
+cpm_all_long$below12 <- str_replace(cpm_all_long$below12, "0", ">12")
+cpm_all_long$below12 <- factor(cpm_all_long$below12, levels =  c("<12", ">12"))
+cpm_all_long <- cpm_all_long %>%  rename("Age_group" = below12)
+
+cpm_all_long_CC <- cpm_all_long
+
+#save cpm values
+#write_tsv(select(cpm_all_long_CC, -CDEATHOFF), file = paste0("~/proj_Maryland_WGCNA/analysis/", "cpm_all_long_CC.txt") )
+
+
+GOI_CC <- c("HHATL", "TSPAN8", "TKT", "SLC6A11", "NCAN", "CERS6")
+
+volcano_CC <- 
+  EnhancedVolcano(res,
+                lab = res$external_gene_name, ylab = bquote(- ~Log[10]~ 'p (adj)'), 
+                title= "childhood vs adolescence" , subtitle = "differential expression: CC",
+                x = 'logFC',
+                y = 'adj.P.Val', pCutoff = 5e-2,
+                FCcutoff = 0.5,  
+              selectLab = GOI_CC,
+                boxedLabels = TRUE,
+                drawConnectors = TRUE,
+                  legendLabSize = 7, axisLabSize = 7, titleLabSize	= 12 , subtitleLabSize = 7, 
+                captionLabSize = 7, labSize = 2, col = c("#440154FF", "#31688EFF" ,"#35B779FF",  "#FDE725FF"),
+
+    legendIconSize = 1, legendPosition= "none")
+
+ggsave(volcano_CC, file = paste0(res_dir, "/volcano.pdf" ), width = 90, units = "mm")  
+```
+
+```{r Process data OFC}
+
+clinMeta <- info_OFC
+
+#
+
+count <- count_OFC
+
+SampleID <- colnames(count)[colnames(count) %in% clinMeta$sampleID] #make any other adjustments to which samples to include/ exclude here
+
+data <- count[,colnames(count) %in% (SampleID)] #count is already in the form of a dataframe with rownames
+data <- round(data) # round data since RSEM output may be non-integer
+
+colData <- clinMeta
+
+
+colData <- colData %>%  column_to_rownames(var="sampleID") #to make a dataframe with rownames
+colData <- colData[colnames(data),] #order the sample names the same as the expression data
+all( rownames(colData) == colnames(data))
+
+#colData[,c(2,4,5,6)] <- lapply(colData[,c(2,4,5,6)],as.factor) #adjust any columns with factor values
+#colData[,c(3,7,8)] <- lapply(colData[,c(3,7,8)],as.numeric) #similarly, make sure numerical values are properly labeled.
+
+
+library(biomaRt)
+ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="https://useast.ensembl.org")
+
+genemap <- getBM(attributes=c("entrezgene_id","ensembl_gene_id", "external_gene_name", "gene_biotype", "go_id", "name_1006", "chromosome_name", "start_position", "end_position"), 
+                 filters="ensembl_gene_id", 
+	values=rownames(data), 
+	#values=colnames(cpm_all_wide),
+	mart=ensembl)
+genemap <- genemap[ duplicated(genemap$ensembl_gene_id) == F,]
+rownames(genemap) <- genemap$ensembl_gene_id #rownames in case dataframe is needed
+
+
+## Remove lowly expressed genes
+
+#library(edgeR)
+keep <- filterByExpr(data, design=colData$below12 #we don't want to have design here, do we? Because if genes are not at all expressed in either category it will be filtered out?  -> The opposite is true! Group-aware filtering makes sure there is expression in enough samples within at least one group. 
+)
+data.filt <- data[keep,]
+
+
+## Keep only protein-coding and lncRNA genes
+genemap2 <- genemap[rownames(data.filt),]
+genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding","lncRNA"))
+data.filt <- data.filt[rownames(genemap2),]
+colData.filt <- subset(colData, rownames(colData) %in% SampleID )
+
+```
+
+### Differential expression analysis
+
+```{r DE analyses childhood vs adolescence OFC}
+analysis <- "OFC_DE_below12"
+sig_level <- 0.01
+
+
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
 
 y <- DGEList(counts = data.filt, genes = genemap2, samples=SampleID)
@@ -313,10 +454,10 @@ res <- topTable(fit, coef="below121", n=Inf, p.value=1)
 
 
 table_sign_genes <- summary(decideTests(fit, p.value=sig_level))
-kableExtra::kable(table_sign_genes, "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
-  kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
+#kableExtra::kable(table_sign_genes, "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
+ # kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
 
-write.table(res, paste0(res_dir,"_",analysis, "/de_limma.txt"), sep="\t", row.names=F)
+#write.table(res, paste0(res_dir,"_",analysis, "/de_limma.txt"), sep="\t", row.names=F)
 
 
 if(identical(analysis,  "OFC_DE_below12")){
@@ -327,10 +468,62 @@ if(identical(analysis,  "CC_DE_below12")){
   DE_genes_0.01_CC <- res %>% filter(adj.P.Val <= 0.01)
 }  
 
+
+cpm_all <- cpm(y, log=TRUE, prior.count=3) #convert counts to normalised cpm
+
+cpm_all <- cpm_all %>% t() %>% data.frame()     #have genes as columns
+cpm_all_long <- 
+  cpm_all %>%  rownames_to_column(var = "SampleID") %>% 
+  pivot_longer(cols = -1, names_to = "ensembl_gene_id", values_to = "log_cpm")
+
+#change gene name to symbol
+cpm_all_long <- 
+  cpm_all_long %>% 
+  left_join(select(genemap2, ensembl_gene_id, external_gene_name) , by=c("ensembl_gene_id"))  #add in symbol name
+
+cpm_all_long <- 
+  cpm_all_long %>% rename("gene_id" = external_gene_name)
+
+cpm_all_long <- 
+  cpm_all_long %>% 
+  left_join(rownames_to_column(colData.filt, var= "SampleID"), by="SampleID")
+
+cpm_all_long$below12 <- str_replace(cpm_all_long$below12, "1", "<12")
+cpm_all_long$below12 <- str_replace(cpm_all_long$below12, "0", ">12")
+cpm_all_long$below12 <- factor(cpm_all_long$below12, levels =  c("<12", ">12"))
+cpm_all_long <- cpm_all_long %>%  rename("Age_group" = below12)
+
+cpm_all_long_OFC <- cpm_all_long
+
+#save cpm values
+#write_tsv(cpm_all_long_OFC, file = paste0("~/proj_Maryland_WGCNA/analysis/", "cpm_all_long_OFC.txt") )
+
+GOI_OFC <- c("KNG1", "KCNS1", "COL1A1", "ADGRG2", "C4A", "KCNB1")
+
+volcano_OFC <- 
+  EnhancedVolcano(res,
+                lab = res$external_gene_name, ylab = bquote(- ~Log[10]~ 'p (adj)'), 
+                title= "childhood vs adolescence" , subtitle = "differential expression: OFC",
+                x = 'logFC',
+                y = 'adj.P.Val', pCutoff = 5e-2,
+                FCcutoff = 0.5,  
+              selectLab = GOI_OFC,
+                boxedLabels = TRUE,
+                drawConnectors = TRUE,
+                  legendLabSize = 7, axisLabSize = 7, titleLabSize	= 12 , subtitleLabSize = 7, 
+                captionLabSize = 7, labSize = 2, col = c("#440154FF", "#31688EFF" ,"#35B779FF",  "#FDE725FF"),
+
+    legendIconSize = 1, legendPosition= "none")
+
+ggsave(volcano_OFC, file = paste0(res_dir, "/volcano.pdf" ), width = 90, units = "mm")  
+
 ```
 
+
+Compare the 2 brain tissues
+
 ```{r DE analyses OFC vs CC}
-#analysis <- "CC_DE_below12"
+analysis <- "CC_DE_below12"
 #analysis <- "OFC_DE_below12"
 #sig_level <- 0.05
 
@@ -377,16 +570,19 @@ summary(decideTests(fit, p.value=sig_level))
 table_sign_genes <- summary(decideTests(fit, p.value=sig_level))
 
 #save table with number of genes
-kableExtra::kable(table_sign_genes, "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
-  kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
+#kableExtra::kable(table_sign_genes, "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
+ # kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
 
-res_region <- topTable(fit, coef="regionOFC", n=Inf, p.value=1)
+#res_region <- topTable(fit, coef="regionOFC", n=Inf, p.value=1)
 
-write.table(res_region, paste0(res_dir, "/de_limma.txt"), sep="\t", row.names=F)
+#write.table(res_region, paste0(res_dir, "/de_limma.txt"), sep="\t", row.names=F)
 
 high_OFC_FDR_001 <- res_region %>%  filter(t < 0 & adj.P.Val < 0.01)
 low_OFC_FDR_001 <- res_region %>%  filter(t > 0 & adj.P.Val < 0.01)
 
+
+res <- read_tsv( paste0(res_dir, "/de_limma_below12.txt"))
+  
 ```
 
 ```{r DE p values as manhattan plot}
@@ -460,7 +656,7 @@ res %>% drop_na(chromosome_name) %>%
   )
 
 
-ggsave(manhplot, file = paste0(res_dir, "/p_values_sign_genes_manhattan.png" ))
+#ggsave(manhplot, file = paste0(res_dir, "/p_values_sign_genes_manhattan.png" ))
 
   
 ```
@@ -473,13 +669,13 @@ ggsave(manhplot, file = paste0(res_dir, "/p_values_sign_genes_manhattan.png" ))
 library(ggsci)
 library(ggpubr)
 
-col <- get_palette("aaas", 10)
+
 colData.filt <- subset(colData, rownames(colData) %in% SampleID )
 
 
 df <- cpm(y, log=TRUE, prior.count=3) #convert counts to normalised cpm
 
-df <- df %>% t() %>% data.frame() 
+#df <- df %>% t() %>% data.frame() 
 
 
 
@@ -487,9 +683,9 @@ df_top10  <- df[rownames(head(res,10)), ] #only keep the top 10 significant gene
 
 df_top10 <- df_top10 %>% t() %>% data.frame()     #have genes as columns
 colnames(df_top10) <- head(res,10)$external_gene_name #use gene symbols in stead of ensembl codes
-df_top10 <- merge(df_top10,colData.filt,by=0) 
+#df_top10 <- merge(df_top10,colData.filt,by=0) 
 
-df_top10 <- df_top10 %>% rename("SampleID" = Row.names )
+#df_top10 <- df_top10 %>% rename("SampleID" = Row.names )
 
 
 #IA's plotting
@@ -517,14 +713,17 @@ df_top10 <- df_top10 %>% rename("SampleID" = Row.names )
 # 
 
 #prepare for flexible plotting
+
+df <- df %>% t() %>% data.frame() 
+
 df_long <- 
-  df %>% 
+ df %>%  
   rownames_to_column(var = "SampleID") %>% 
   pivot_longer(cols = -1, names_to = "gene_id", values_to = "log_cpm") 
 
 df_long <- 
   df_long %>% 
-  left_join(info_CC, by= c( "SampleID" ="sampleID"))
+  left_join(colData_all, by= c( "SampleID" ="sampleID"))
 
 df_long$below12 <- str_replace(df_long$below12, "1", "<12")
 df_long$below12 <- str_replace(df_long$below12, "0", ">12")
@@ -533,23 +732,55 @@ df_long$below12 <- factor(df_long$below12, levels =  c("<12", ">12"))
 
 df_long <- df_long %>%  rename("Age_group" = below12) 
 
+
+#Presentation: plot CC genes
 plot_expr <- 
   df_long %>% 
-  ggplot(aes(x=Age_group, y= log_cpm)) + 
+  left_join(select(genemap2, ensembl_gene_id, external_gene_name) , by=c("gene_id" = "ensembl_gene_id")) %>%  #add in symbol name
+  # filter(gene_id %in% rownames(head(res,10))) %>% 
+  filter(external_gene_name %in% GOI_CC) %>% 
+    mutate(external_gene_name = factor(external_gene_name, levels= GOI_CC )) %>% 
+ ggplot(aes(x=Age_group, y= log_cpm)) + 
+ # ggplot(aes(x=region, y= log_cpm)) + 
     geom_boxplot( color ="black",size=0.7, outlier.shape=NA, fill="white") +
     geom_point(aes( colour= Age_group, fill = Age_group), position= "jitter") +
-  facet_wrap(~gene_id, scales = "free_y") +
-      scale_colour_manual(values=col[c(1,6)]) +
-    scale_fill_manual(values=col[c(1,6)]) +
-  labs(title= paste0("Normalised expression, 10 significant DE genes, ", analysis)) +
+  facet_wrap(~external_gene_name, scales = "free_y") +
+      scale_colour_manual(values=col[c(3,4)]) +
+    scale_fill_manual(values=col[c(3,4)]) +
+#  labs(title= paste0("Normalised expression, 10 significant DE genes, ", analysis)) +
   theme_bw()
 
-#ggsave(plot_expr, file = paste0(res_dir, "/plot_expr_top10sign.pdf" ))  
+
+ggsave(plot_expr, file = paste0(res_dir, "/plot_expr_top10sign.pdf" ) , width = 120, units = "mm")  
   
+#Presentation: plot CC genes by age
+plot_expr_age <- cpm_all_long_CC %>% 
+   filter(gene_id %in% GOI_CC) %>%  mutate(gene_id = factor(gene_id, levels= GOI_CC )) %>% 
+     ggplot(aes(x=AGE, y= log_cpm, colour=Age_group)) +
+     geom_point()+ 
+   facet_wrap(~gene_id, scales = "free_y") +
+     geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE, colour= "grey") +
+  scale_colour_manual(values=col[c(3,4)])
+
+#Presentation: plot OFC genes by age
+plot_expr_age <- 
+  cpm_all_long_OFC %>% 
+   filter(gene_id %in% GOI_OFC) %>%  mutate(gene_id = factor(gene_id, levels= GOI_OFC )) %>% 
+     ggplot(aes(x=AGE, y= log_cpm, colour=Age_group)) +
+     geom_point()+ 
+   facet_wrap(~gene_id, scales = "free_y") +
+     geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE, colour= "grey") +
+  scale_colour_manual(values=col[c(3,4)])
+
+ggsave(plot_expr_age, file = paste0(res_dir, "/plot_expr_age.pdf" ) , width = 120, units = "mm")  
+ 
 
 ```
 
 ```{r plot top DE genes expression BrainRegion}
+
+GOI_region <- c("ANKRD10", "STARD9", "LMAN2L", "CACNA1B", "GRIN2A", "ANK3")
+
 colData.filt <- subset(colData, rownames(colData) %in% SampleID )
 
 
@@ -559,16 +790,17 @@ df <- cpm(y, log=TRUE, prior.count=3) #convert counts to normalised cpm. genes a
 
 
 
-df_top10  <- df[rownames(head(res_region,10)), ] #only keep the top 10 significant genes
+df_top8  <- df[rownames(head(res_region,8)), ] #only keep the top 8 significant genes
 
-df_top10 <- df_top10 %>% t() %>% data.frame()     #have genes as columns
-colnames(df_top10) <- head(res,10)$external_gene_name #use gene symbols in stead of ensembl codes
+df_top8 <- df_top8 %>% t() %>% data.frame()     #have genes as columns
+colnames(df_top8) <- head(res_region,8)$external_gene_name #use gene symbols in stead of ensembl codes
 
-df_top10 <- df_top10 %>% rownames_to_column(var = "SampleID" )
+df_top8 <- df_top8 %>% rownames_to_column(var = "SampleID" )
 
 #prepare for flexible plotting
 
 df <- df %>% t() %>% data.frame() 
+
 df_long <- 
   df %>% 
   rownames_to_column(var = "SampleID") %>% 
@@ -586,49 +818,80 @@ df_long$below12 <- factor(df_long$below12, levels =  c("<12", ">12"))
 
 df_long <- df_long %>%  rename("Age_group" = below12) 
 
-plot_expr <- 
-  df_long %>% 
-    filter(external_gene_name %in% colnames(df_top10) ) %>% 
-  ggplot(aes(x=region, y= log_cpm)) + 
-    geom_boxplot( color ="black",size=0.7, outlier.shape=NA, fill="white") +
-    geom_point(aes( colour= region, fill = region), position= "jitter") +
-  facet_wrap(~external_gene_name, scales = "free_y") +
-      scale_colour_manual(values=col[c(1,6)]) +
-    scale_fill_manual(values=col[c(1,6)]) +
-  labs(title= paste0("Normalised expression, 10 significant DE genes, ", analysis)) +
-  theme_bw()
+# 
+# plot_expr <- 
+#   df_long %>% 
+#         filter(external_gene_name %in% colnames(df_top10) ) %>% 
+#   ggplot(aes(x=region, y= log_cpm)) + 
+#     geom_boxplot( color ="black",size=0.7, outlier.shape=NA, fill="white") +
+#     geom_point(aes( colour= region, fill = region), position= "jitter") +
+#   facet_wrap(~external_gene_name, scales = "free_y") +
+#       scale_colour_manual(values=col[c(1,2)]) +
+#     scale_fill_manual(values=col[c(1,2)]) +
+#   labs(title= paste0("Normalised expression, 10 significant DE genes, ", analysis)) +
+#   theme_bw()
 
-ggsave(plot_expr, file = paste0(res_dir, "/plot_expr_top10sign.pdf" ))  
+#ggsave(plot_expr, file = paste0(res_dir, "/plot_expr_top10sign.pdf" ))  
   
 #plot expression highest in OFC/ CC separately
 plot_expr_highOFC <- 
   df_long %>% 
-    filter(external_gene_name %in% high_OFC_FDR_001$external_gene_name[1:10] ) %>% 
+    filter(external_gene_name %in% high_OFC_FDR_001$external_gene_name[1:8] ) %>% 
   ggplot(aes(x=region, y= log_cpm)) + 
     geom_boxplot( color ="black",size=0.7, outlier.shape=NA, fill="white") +
     geom_point(aes( colour= region, fill = region), position= "jitter") +
-  facet_wrap(~external_gene_name, scales = "free_y") +
-      scale_colour_manual(values=col[c(1,6)]) +
-    scale_fill_manual(values=col[c(1,6)]) +
-  labs(title= paste0("Normalised expression, 10 significant genes higher in OFC")) +
+  facet_wrap(~external_gene_name, scales = "free_y", nrow = 2) +
+      scale_colour_manual(values=col[c(1,2)]) +
+    scale_fill_manual(values=col[c(1,2)]) +
+  labs(title= paste0("Normalised expression, 8 significant genes higher in OFC")) +
   theme_bw()
 
 plot_expr_highCC <- 
   df_long %>% 
-    filter(external_gene_name %in% low_OFC_FDR_001$external_gene_name[1:10] ) %>% 
+    filter(external_gene_name %in% low_OFC_FDR_001$external_gene_name[1:8] ) %>% 
   ggplot(aes(x=region, y= log_cpm)) + 
     geom_boxplot( color ="black",size=0.7, outlier.shape=NA, fill="white") +
     geom_point(aes( colour= region, fill = region), position= "jitter") +
-  facet_wrap(~external_gene_name, scales = "free_y") +
-      scale_colour_manual(values=col[c(1,6)]) +
-    scale_fill_manual(values=col[c(1,6)]) +
-  labs(title= paste0("Normalised expression, 10 significant genes higher in OFC")) +
+  facet_wrap(~external_gene_name, scales = "free_y", nrow = 2) +
+      scale_colour_manual(values=col[c(1,2)]) +
+    scale_fill_manual(values=col[c(1,2)]) +
+  labs(title= paste0("Normalised expression, 8 significant genes higher in CC")) +
   theme_bw()
 
-ggsave(plot_expr_highOFC, file = paste0(res_dir, "/plot_expr_top10sign_highOFC.pdf" ))  
-ggsave(plot_expr_highCC, file = paste0(res_dir, "/plot_expr_top10sign_highCC.pdf" ))  
-  
 
+#plot some examples of DE genes combined
+plot_expr_examples <- 
+  df_long %>% 
+  filter(external_gene_name %in% GOI_region) %>% 
+   mutate(external_gene_name = factor(external_gene_name, levels=GOI_region)) %>% #mind the order
+  ggplot(aes(x=region, y= log_cpm)) + 
+    geom_boxplot( color ="black",size=0.7, outlier.shape=NA, fill="white") +
+    geom_point(aes( colour= region, fill = region), position= "jitter") +
+  facet_wrap(~external_gene_name, scales = "free_y", nrow = 2) +
+      scale_colour_manual(values=col[c(1,2)]) +
+    scale_fill_manual(values=col[c(1,2)]) +
+  labs(title= paste0("Normalised expression, example genes DE in CC vs OFC")) +
+  theme_bw()
+
+ggsave(plot_expr_highOFC, file = paste0(res_dir, "/plot_expr_top8sign_highOFC.pdf" ), width = 180, units = "mm")  
+ggsave(plot_expr_highCC, file = paste0(res_dir, "/plot_expr_top8sign_highCC.pdf" ), width = 180, units = "mm")  
+ggsave(plot_expr_examples, file = paste0(res_dir, "/plot_expr_examples.pdf" ), width = 120, units = "mm")
+
+volcano_region <- 
+  EnhancedVolcano(res_region,
+                lab = res_region$external_gene_name, ylab = bquote(- ~Log[10]~ 'p (adj)'), title= "CC vs OFC", subtitle = "differential expression",
+                x = 'logFC',
+                y = 'adj.P.Val', pCutoff = 5e-2,
+                FCcutoff = 0.5,  
+               selectLab = GOI_region,
+                boxedLabels = TRUE,
+                drawConnectors = TRUE,
+                  legendLabSize = 7, axisLabSize = 7, titleLabSize	= 12 , subtitleLabSize = 7, 
+                captionLabSize = 7, labSize = 2, col = c("#440154FF", "#31688EFF" ,"#35B779FF",  "#FDE725FF"),
+
+    legendIconSize = 1, legendPosition= "none")
+
+ggsave(volcano_region, file = paste0(res_dir, "/volcano_region.pdf" ), width = 90, units = "mm")  
 ```
 
 
@@ -697,8 +960,8 @@ genes_sd_diff <-
     geom_boxplot(  outlier.shape=NA, fill="white") +
     geom_point(aes( colour = AGE), position= "jitter") +
   facet_wrap(~gene_id, scales = "free_y") +
- #     scale_colour_manual(values=col[c(1,6)]) +
- #   scale_fill_manual(values=col[c(1,6)]) +
+ #     scale_colour_manual(values=col[c(3,4)]) +
+ #   scale_fill_manual(values=col[c(3,4)]) +
   #labs(title= paste0("Normalised expression, 20 genes with high differense in SD, ", analysis)) +
   theme_bw()
 
@@ -761,7 +1024,98 @@ sd_diff_GO<-
 ggsave(sd_diff_GO, file = paste0(res_dir, "sd_diff_GO_expr.pdf"))
 
 #save cpm values
-write_tsv(select(cpm_all_long, -CDEATHOFF), file = paste0(res_dir, "cpm_all_long.txt") )
+#write_tsv(select(cpm_all_long, -CDEATHOFF), file = paste0(res_dir, "cpm_all_long.txt") )
+```
+
+```{r find genes with stat. diff. in variance}
+library(rstatix)
+##OFC
+#res_dir <- "~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/"
+#cpm_all_long <- cpm_all_long_OFC
+
+## CC
+res_dir <- "~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/"
+ cpm_all_long <- cpm_all_long_CC
+
+sd_diff_dir <-  cpm_all_long %>% 
+  group_by(ensembl_gene_id, Age_group) %>%
+  mutate(sd= sd(log_cpm)) %>% 
+  dplyr::select(ensembl_gene_id, gene_id, Age_group, sd) %>% 
+  distinct() %>% 
+  pivot_wider(names_from = Age_group, values_from = sd, names_prefix = "sd_") %>% 
+  dplyr::filter(abs(`sd_>12` - `sd_<12`) > 0.5) %>% 
+  dplyr::mutate(sd_diff= `sd_>12` - `sd_<12`) %>% 
+  mutate(direction= ifelse(sd_diff > 0,
+                           "largest sd in oldest",
+                           "largest sd in youngest"
+  )) %>% 
+  mutate(direction = factor(direction, levels= c("largest sd in youngest", "largest sd in oldest"
+                           ))) %>% 
+  ungroup()
+
+count_sd_diff_dir <- sd_diff_dir %>% count(direction)
+#write_tsv(count_sd_diff_dir, paste0(res_dir, "count_sd_diff_dir.txt"))
+
+hist_sd_diff_dir <- 
+  sd_diff_dir %>% 
+  ggplot(aes(x=sd_diff)) + 
+    geom_histogram(aes(fill=direction)) + 
+    scale_fill_manual(values=col[c(3,4)]) +
+  theme(legend.title  = element_blank(),
+        legend.position = "bottom")
+
+#CC
+#   direction                  n
+#   <chr>                  <int>
+# 1 largest_sd_in_oldest      16
+# 2 largest_sd_in_youngest  1845
+
+#OFC
+#   direction                  n
+#   <chr>                  <int>
+# 1 largest_sd_in_oldest      44
+# 2 largest_sd_in_youngest  1037
+
+
+
+variance_diff <- 
+  cpm_all_long %>% 
+  group_by(ensembl_gene_id) %>% 
+  levene_test(log_cpm ~ Age_group) 
+
+variance_diff_adj <- 
+  variance_diff %>%  rstatix::adjust_pvalue( p = "p", output.col = "p_adj", method = "fdr")
+
+variance_diff_adj <- variance_diff_adj %>% 
+  left_join(dplyr::select(genemap, ensembl_gene_id, external_gene_name), by= "ensembl_gene_id")
+
+#write_tsv(variance_diff_adj, paste0(res_dir, "variance_diff_adj.txt"))
+
+sd_diff_examples <-
+  variance_diff_adj %>% 
+  left_join(select(sd_diff_dir, ensembl_gene_id, sd_diff, direction), by= "ensembl_gene_id") %>% 
+  filter(external_gene_name != "") %>% 
+  group_by(direction) %>% 
+  filter(external_gene_name %in% cpm_all_long$gene_id[cpm_all_long$log_cpm >2]) %>% #filter examples to genes with at least 1 log2cpm
+  slice_min(p, n= 3 ) %>% tidyr::drop_na() %>% ungroup()
+  
+#Presentation: plot examples
+plot_expr_sd_diff <- 
+ cpm_all_long %>% 
+ # filter(gene_id %in% sd_diff_examples$external_gene_name) %>% 
+   filter(gene_id %in% sd_diff_examples$external_gene_name[sd_diff_examples$sd_diff < 0]) %>% #only the most common form: highest variance in youngest
+    mutate(gene_id = factor(gene_id, levels= sd_diff_examples$external_gene_name )) %>% 
+     ggplot(aes(x=AGE, y= log_cpm, colour=Age_group)) +
+     geom_point()+ 
+   facet_wrap(~gene_id, scales = "free_y") +
+     geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE, colour= "grey") +
+  scale_colour_manual(values=col[c(3,4)])
+
+
+ggsave(hist_sd_diff_dir, height = 60, width = 90, units = "mm", file = paste0(res_dir, "hist_sd_diff_dir.pdf"))
+ggsave(plot_expr_sd_diff, width = 120, units = "mm", file = paste0(res_dir, "plot_expr_sd_diff.pdf"))
+
+
 ```
 
 
@@ -792,7 +1146,7 @@ gene_pair <- c("SNAP23", "SNAP25")
     ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
   geom_point()+
   geom_smooth(se = FALSE) +
-        scale_colour_manual(values=col[c(1,6)])
+        scale_colour_manual(values=col[c(3,4)])
 
 
   cpm_all_long %>% 
@@ -803,7 +1157,7 @@ gene_pair <- c("SNAP23", "SNAP25")
     ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
   geom_point()+
   geom_smooth(se = FALSE) +
-        scale_colour_manual(values=col[c(1,6)])
+        scale_colour_manual(values=col[c(3,4)])
 
 ```
 
@@ -991,7 +1345,7 @@ neg_corr_membrane <- cor_paralogs_neuro_sim %>%
   geom_point()+ 
     facet_wrap(~pair, scales = "free_y") +
   geom_smooth(se = FALSE) +
-        scale_colour_manual(values=col) 
+        scale_colour_manual(values=col[5:8]) 
   
   #visualise gene expression of negatively correlated pairs
   cpm_all_long %>% 
@@ -1006,7 +1360,7 @@ neg_corr_membrane <- cor_paralogs_neuro_sim %>%
   geom_point()+ 
     facet_wrap(~pair, scales = "free_y") +
   geom_smooth(se = FALSE) +
-        scale_colour_manual(values=col) 
+        scale_colour_manual(values=col[5:8]) 
   
   #Could be an idea to do an xy scatter plot of gene1 vs gene2 (shading points by subject age)
   
@@ -1027,10 +1381,10 @@ neg_corr_membrane <- cor_paralogs_neuro_sim %>%
 
 Gene subset: genes with changes in expression from early childhood to adulthood
 ```{r age trend significant coefficient}
-analysis <- "age_trend_genes_OFC"
-cpm_all_long <- cpm_all_long_OFC
-#analysis <- "age_trend_genes_CC"
-#cpm_all_long <- cpm_all_long_CC
+#analysis <- "age_trend_genes_OFC"
+#cpm_all_long <- cpm_all_long_OFC
+analysis <- "age_trend_genes_CC"
+cpm_all_long <- cpm_all_long_CC
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
@@ -1045,6 +1399,9 @@ res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
 #Work on all genes
 cor_subset_genes <- unique(cpm_all_long$ensembl_gene_id)
+
+#work on subset of genes:
+#cor_subset_genes <- colnames(cor_subset)
 
 res_poly_all <- list()
 models_poly_all <- list() 
@@ -1068,7 +1425,7 @@ for(gene in cor_subset_genes){
   
   counter <- counter + 1;
                   if(counter %in% seq(0, length(cor_subset_genes), round(length(cor_subset_genes))/10))
-                      print(paste(round(counter/length(cor_subset_genes))*100), "% has been processed")
+                      cat(paste(round(counter/length(cor_subset_genes))*100), "% has been processed")
 }
 
 res_poly_all_df <-  do.call("rbind", res_poly_all)
@@ -1131,47 +1488,122 @@ ggsave(age_trend_linear,  file = paste0(res_dir, "/plot_top10_AGE_linear.pdf" ))
 
 write_tsv(age_trend_genes, file = paste0(res_dir, "/age_trend_genes.txt" ))
 write_tsv(age_trend_genes_linear_adj, file = paste0(res_dir, "/age_trend_linear.txt" ))
+write_tsv(poly_coeff_pvalue_df, file = paste0(res_dir, "/poly_coeff_pvalue_df.txt" ))
 
 write.csv(res_poly_all_df, file = paste0(res_dir, "/res_poly_all_df.txt" ))
 ```
 
-Investigate correlation pairs where genes have the same GO-annotation
-```{r create table of GO-terms}
+### Visualise expression of genes with possible age trend
+```{r show gene expression trends of example genes}
+library(gridExtra)
+#human single cell from cerebellum, 1-yo and a handful in their 40ies
+high_adult_cellXgene <- readxl::read_xlsx("~/proj_Maryland_WGCNA/analysis/cellXgene/higher_adult_topgenes.xlsx", col_names = "gene_id")
 
-GOall <- AnnotationDbi::select(org.Hs.eg.db, columns = c("ENSEMBL" , "SYMBOL" , "GO"), keys= unique(age_trend_genes_linear_adj$ensembl_gene_id), keytype = "ENSEMBL") 
+Li_2020_mouse <- c("IGFBPL1", "OSTN", "KLK6", "DEFB1")
 
-GOall_BP <- 
-  GOall %>%  
-  tidyr::drop_na() %>%  
-  filter(ONTOLOGY =="BP")
+find_paper <- c("GABRB1", "GABRG3", "ATF6", "CRTAC1")
 
-descr <- clusterProfiler::go2term(GOall_BP$GO)
+##check expression OFC
+res_dir <- "~/proj_Maryland_WGCNA/analysis/OFC_DE_below12/"
+cpm_all_long <- cpm_all_long_OFC
 
-GOall_BP <- 
-  GOall_BP %>% 
-  dplyr::select(-EVIDENCE) %>% 
-  distinct() %>% 
-  left_join(descr, by = c("GO" = "go_id"))
+##check expression CC
+res_dir <- "~/proj_Maryland_WGCNA/analysis/CC_DE_below12/"
+cpm_all_long <- cpm_all_long_CC
 
-pairs_GO_Var2 <- pairs %>% left_join(select(GOall_BP, ENSEMBL, GO), by= c("Var2" = "ENSEMBL"), relationship = "many-to-many") %>% dplyr::rename("Var2_GO" = GO) %>% tidyr::drop_na()
-pairs_GO_Var1 <- pairs %>% left_join(select(GOall_BP, ENSEMBL, GO), by= c("Var1" = "ENSEMBL"), relationship = "many-to-many") %>% dplyr::rename("Var1_GO" = GO) %>%  tidyr::drop_na()
-pairs_GO <- pairs_GO_Var1 %>% left_join(pairs_GO_Var2, by= c("Var1", "Var2")) %>% tidyr::drop_na()
-pairs_GO_equal <- pairs_GO %>%  filter(Var1_GO == Var2_GO)
+subset <- list()
+subset[["Li_2020_mouse"]] <- Li_2020_mouse
+subset[["find_paper"]] <- find_paper
+subset[["high_adult_cellXgene"]] <- high_adult_cellXgene$gene_id
 
-pairs_GO_equal <- 
-  pairs_GO_equal %>% 
-  select(-Var2_GO) %>% 
-  rename("GO" = Var1_GO) %>% 
-  left_join(select(GOall_BP, GO, Term), by = "GO") %>%  #insert GO term description
-    distinct()
+plot_list_expression_examples <- list() 
 
-#Problem: many genes have many GO-terms. 
-#restrict pairs analysis to the enriched GO-terms?
-GO_enrich <- 
-  GOall_BP %>% 
-  filter(GO %in% gse@result$ID[gse@result$p.adjust < sig_level])
+for(i in c(1,2,3)){
 
-ego@result %>% filter(p.adjust < sig_level) %>% filter(ID %in% gse@result$ID[gse@result$p.adjust < sig_level]) %>% dim()
+plot_list_expression_examples[[i]] <- 
+  cpm_all_long %>% 
+     filter(gene_id %in% subset[[i]]) %>% 
+     ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+   geom_point()+
+   geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE) +
+  #      scale_colour_manual(values=col[5:8]) +
+  facet_wrap(vars(gene_id), scales = "free_y") +
+  labs(title = names(subset)[i], subtitle = subset[i]) +
+  theme(legend.position = "none") 
+  
+}
+
+plot_expression_examples <- arrangeGrob(grobs = plot_list_expression_examples, 
+                                        layout_matrix = rbind(c(1,2),
+                                                              c(3,3),
+                                                              c(3,3))
+             )
+
+ggsave(plot_expression_examples,  file= paste0(res_dir, "plot_expression_examples.pdf"))
+
+#only mouse from Li paper
+plot_list_expression_examples_Li <- 
+  cpm_all_long %>% 
+     filter(gene_id %in% Li_2020_mouse) %>% 
+     ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+   geom_point()+
+   geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE) +
+        scale_colour_manual(values=col[5:8]) +
+  facet_wrap(vars(gene_id), scales = "free_y") +
+  labs(title = "Li_2020_mouse (4 genes)" )+
+  theme(legend.position = "none") 
+  
+ggsave(plot_list_expression_examples_Li,  file= paste0(res_dir, "plot_list_expression_examples_Li.pdf"))
+
+
+
+#overlap with myelin genes for CC
+myelin_genes <- readxl::read_xlsx("~/PhD/RNAseq_temporal/genes_of_interest/stokowy_steen_myelin_curated_for_r.xlsx", 
+                                  sheet = "SupplementaryFile1_170306.txt")
+
+ age_trend_genes_linear_adj_CC <-
+   read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt")
+
+age_trend_myelin <- 
+  age_trend_genes_linear_adj_CC %>% 
+  filter(p_linear_adj < 0.05) %>% 
+  filter(ensembl_gene_id %in% myelin_genes$`ENSEMBL ID`) %>% 
+  left_join(dplyr::select(genemap, ensembl_gene_id, external_gene_name), by= "ensembl_gene_id")
+
+  
+plot_myelin_trend_CC <- 
+  cpm_all_long %>% 
+     filter(ensembl_gene_id %in% age_trend_myelin$ensembl_gene_id) %>% 
+     ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+   geom_point()+
+   geom_smooth(se = FALSE) +
+       scale_colour_manual(values=col) +
+  facet_wrap(vars(gene_id), scales = "free_y") +
+#  labs(title = names(subset)[i], subtitle = subset[i]) +
+  theme(legend.position = "none")
+
+
+if(identical(res_dir,  "~/proj_Maryland_WGCNA/analysis/CC_DE_below12/")){
+ggsave(plot_myelin_trend_CC, file= paste0(res_dir, "plot_myelin_trend_CC.pdf"))
+       }  
+
+
+#are there any with statistical significant age trend genes among the previously hypothesised?
+age_trend_genes_linear_adj_OFC %>%  
+  left_join(dplyr::select(genemap, ensembl_gene_id, external_gene_name), by= "ensembl_gene_id") %>% f
+ilter(p_linear_adj < 0.01) %>% 
+  filter(external_gene_name %in% 
+           c(Li_2020_mouse, find_paper, high_adult_cellXgene$gene_id)) 
+
+age_trend_genes_linear_adj_CC %>%  
+  left_join(dplyr::select(genemap, ensembl_gene_id, external_gene_name), by= "ensembl_gene_id") %>% f
+ilter(p_linear_adj < 0.01) %>% 
+  filter(external_gene_name %in% 
+           c(Li_2020_mouse, find_paper, high_adult_cellXgene$gene_id)) 
+
+#No real age-trend for these genes in our data, except KLK6 for CC
+
+
 
 ```
 
@@ -1181,17 +1613,17 @@ ego@result %>% filter(p.adjust < sig_level) %>% filter(ID %in% gse@result$ID[gse
 
  analysis <- "switches/opposite_linear/OFC"
  cpm_all_long_OFC <- 
-   read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_OFC.txt" )
+  read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_OFC.txt" )
  age_trend_genes_linear_adj <-
    read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt")
  cpm_all_long <- cpm_all_long_OFC
 
-#analysis <- "switches/opposite_linear/CC"
-#cpm_all_long_CC <- 
-#  read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_CC.txt" )
-#age_trend_genes_linear_adj <-
- # read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt")
-#cpm_all_long <- cpm_all_long_CC
+# analysis <- "switches/opposite_linear/CC"
+# cpm_all_long_CC <- 
+ #  read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_CC.txt" )
+# age_trend_genes_linear_adj <-
+#   read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt")
+# cpm_all_long <- cpm_all_long_CC
 
 
 coeff_min <- 0#the minimum linear coefficient included in the analysis
@@ -1268,21 +1700,132 @@ genes_range1.5<-
 
 pairs <- pairs[pairs$Var1 %in% genes_range1.5$ensembl_gene_id & pairs$Var2 %in% genes_range1.5$ensembl_gene_id,]
 
-cpm_all_wide <- cpm_all_long %>% select(SampleID, ensembl_gene_id, log_cpm) %>% 
-  pivot_wider(names_from = ensembl_gene_id, values_from = log_cpm) %>% column_to_rownames(var = "SampleID")
+cpm_all_wide <- 
+  cpm_all_long %>% 
+  dplyr::select(SampleID, ensembl_gene_id, log_cpm) %>% 
+  pivot_wider(names_from = ensembl_gene_id, values_from = log_cpm) %>% 
+  column_to_rownames(var = "SampleID")
 
 ```
 
 
+Investigate correlation pairs where genes have the same GO-annotation
+```{r create table of GO-terms}
+
+GOall <- AnnotationDbi::select(org.Hs.eg.db, columns = c("ENSEMBL" , "SYMBOL" , "GO"), keys= unique(age_trend_genes_linear_adj$ensembl_gene_id), keytype = "ENSEMBL") 
+
+GOall_BP <- 
+  GOall %>%  
+  tidyr::drop_na() %>%  
+  filter(ONTOLOGY =="BP")
+
+descr <- clusterProfiler::go2term(GOall_BP$GO)
+
+GOall_BP <- 
+  GOall_BP %>% 
+  dplyr::select(-EVIDENCE) %>% 
+  distinct() %>% 
+  left_join(descr, by = c("GO" = "go_id"))
+
+pairs_GO_Var2 <- pairs %>% left_join(select(GOall_BP, ENSEMBL, GO), by= c("Var2" = "ENSEMBL"), relationship = "many-to-many") %>% dplyr::rename("Var2_GO" = GO) %>% tidyr::drop_na()
+pairs_GO_Var1 <- pairs %>% left_join(select(GOall_BP, ENSEMBL, GO), by= c("Var1" = "ENSEMBL"), relationship = "many-to-many") %>% dplyr::rename("Var1_GO" = GO) %>%  tidyr::drop_na()
+pairs_GO <- pairs_GO_Var1 %>% left_join(pairs_GO_Var2, by= c("Var1", "Var2")) %>% tidyr::drop_na()
+pairs_GO_equal <- pairs_GO %>%  filter(Var1_GO == Var2_GO)
+
+pairs_GO_equal <- 
+  pairs_GO_equal %>% 
+  select(-Var2_GO) %>% 
+  rename("GO" = Var1_GO) %>% 
+  left_join(select(GOall_BP, GO, Term), by = "GO") %>%  #insert GO term description
+    distinct()
+
+#Problem: many genes have many GO-terms. 
+#restrict pairs analysis to the enriched GO-terms?
+GO_enrich <- 
+  GOall_BP %>% 
+  filter(GO %in% gse@result$ID[gse@result$p.adjust < sig_level])
+
+ego@result %>% filter(p.adjust < sig_level) %>% filter(ID %in% gse@result$ID[gse@result$p.adjust < sig_level]) %>% dim()
+
+```
+
+
+```{r find interesting time-trend genes}
+#use GO-annotation to find interesting genes
+##check expression OFC
+res_dir <- "~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/"
+cpm_all_long <- cpm_all_long_OFC
+age_trend_genes_linear_adj <-
+ read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt"  )
+
+
+## CC
+# res_dir <- "~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/"
+# cpm_all_long <- cpm_all_long_CC
+# 
+# age_trend_genes_linear_adj <- 
+#   read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt"  )
+
+age_trend_linear_GO <- age_trend_genes_linear_adj %>% 
+  filter(p_linear_adj < 0.01) %>% 
+  left_join(GOall_BP, by= c("ensembl_gene_id" = "ENSEMBL"))
+
+#find the GO-terms with most age-trend genes
+#display 4 strongest genes in the 4 most populated GO-terms
+top_terms <-
+  age_trend_linear_GO %>%  
+  tidyr::drop_na() %>% 
+  count(Term) %>%  
+  arrange(desc(n)) %>%  
+  head(n=4) %>% 
+  dplyr::select(Term) 
+
+top_terms <- base::as.vector(top_terms$Term)
+
+top_term_genes <- age_trend_linear_GO %>%  
+  tidyr::drop_na() %>% 
+  filter(Term %in% top_terms ) %>% 
+  arrange(p_linear_adj) %>% 
+  group_by(Term) %>% 
+  dplyr::slice(1:4)
+  
+plot_list_top_terms <- list() 
+
+for(i in c(1,2,3,4)){
+
+plot_list_top_terms[[i]] <- 
+  cpm_all_long %>% 
+     filter(gene_id %in% top_term_genes[top_term_genes$Term == top_terms[i],]$SYMBOL ) %>%
+      ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+   geom_point()+
+   geom_smooth(se = FALSE) +
+  #      scale_colour_manual(values=col) +
+  facet_wrap(vars(gene_id), scales = "free_y") +
+  labs(title = paste0("GO-term: ", top_terms[i])) +
+  theme(legend.position = "none")
+  
+}
+
+plot_4_top_terms <- arrangeGrob(grobs = plot_list_top_terms 
+                           )
+
+ggsave(plot_4_top_terms,  file= paste0(res_dir, "plot_linear_4_top_terms.pdf"))
+
+
+```
+
+
+
 Method when total list of genes is too large to do all against all correlation
 ```{r loop genes corr res expr of selected pairs }
-pairs <- pairs_GO_equal %>% 
-  select(Var1, Var2) %>% 
-  distinct()
+#pairs <- pairs_GO_equal %>% 
+#  select(Var1, Var2) %>% 
+#  distinct()
 
 #loop over pairs of interest's expression level and calculate correlations (with p-values)
 #loop over pairs of interest's residual levels and calculate correlations (with p-values)
 cor_subset <- cpm_all_wide[, colnames(cpm_all_wide) %in% c(pairs[,1], pairs[,2]) ]
+cor_subset_genes <- colnames(cor_subset)
 
 corr_res_expr_loop = data.frame()
 counter <- 0
@@ -1322,7 +1865,7 @@ corr_res_expr <-
 corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_res", output.col = "p_res_adj", method = "fdr")
 corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_expr", output.col = "p_expr_adj", method = "fdr")
 
-
+corr_res_expr <- corr_res_expr %>% left_join(select(pairs_GO_equal, -Var2) , by= c("geneX" = "Var1"))
 ```
 
 
@@ -1332,6 +1875,8 @@ Method when total list of genes is small enough to do all against all correlatio
 #If n genes <2000, it is possible to get correlations from all, and afterwards pick out the ones we're interested in.
 
 cor_subset <- cpm_all_wide[, colnames(cpm_all_wide) %in% pos_linear$ensembl_gene_id | colnames(cpm_all_wide) %in% neg_linear$ensembl_gene_id]
+
+cor_subset_genes <- colnames(cor_subset)
 
 #set.seed(22)
 #random300 <- cpm_all_wide[, sample(colnames(cpm_all_wide), 300, replace=F)]
@@ -1402,7 +1947,9 @@ corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_expr", output.col = "p_
 
 Genes with opposite linear trend (and crossing expression trend lines)
 ```{r opposite linear }
+library(ggpubr)
 ##start here with gene pair selection 
+#Gene pairs with opposite linear age trend selected in chunck "genes of interest correlation residuals and expression levels". Correlations calculated in previous chunk "compute corr res expr for all pairs of genes"
 
 #add gene symbol
 corr_res_expr <- 
@@ -1428,16 +1975,19 @@ corr_res_expr <-
   corr_res_expr %>% 
   filter(sign(geneX_lin_coeff) != sign(geneY_lin_coeff)) 
   
-#only keep genes where residuals are significantly negative (p.adj)
-corr_res_expr <- 
-  corr_res_expr %>% 
-  filter(p_res_adj <= sig_level)
 
 #only keep genes where both members of pair have a certain range
 corr_res_expr <- 
   corr_res_expr %>% 
   filter(geneX %in% genes_range1.5$ensembl_gene_id & 
            geneY %in% genes_range1.5$ensembl_gene_id)
+
+#only keep genes where residuals are significantly different from zero (p.adj)
+corr_res_expr <- 
+  corr_res_expr %>% 
+  filter(p_res_adj <= sig_level)
+
+
 
 #IA's idea: only keep gene pairs that have their fitted line cross each other
 #linear slope and intercept
@@ -1554,6 +2104,10 @@ Labels <- corr_res_expr_cat %>% group_by(cat, .drop=FALSE) %>% summarise(N=paste
 #X position
 Labels$corr_expr <- 0.5
 
+corr_res_expr_cat$corr_expr <- as.numeric(corr_res_expr_cat$corr_expr)
+corr_res_expr_cat$corr_res <- as.numeric(corr_res_expr_cat$corr_res)
+corr_res_expr_cat$p_expr <- as.numeric(corr_res_expr_cat$p_expr)
+corr_res_expr_cat$p_res <- as.numeric(corr_res_expr_cat$p_res)
 
 #max freqpoly in order to place percentage correctly in plot
 #find largest category
@@ -1601,7 +2155,7 @@ c <- "neg_expr_neg_res"
   
 plotlist <- list()
 
-for(c in c("neg_expr_neg_res", "pos_expr_pos_res", "neg_expr_notsign_res", "neg_expr_notsign_res", "notsign_expr_neg_res")){
+for(c in c("neg_expr_neg_res",  "neg_expr_notsign_res",  "neg_expr_pos_res", "pos_expr_pos_res",  "notsign_expr_neg_res")){
 
 corr_res_expr_vis <- 
   corr_res_expr_cat %>%  
@@ -1660,9 +2214,11 @@ plot(ggarrange(plotlist = plotlist)  )
 combined_plot <-   ggarrange(plotlist = plotlist)
 
 plot_neg_cor <- plotlist$neg_expr_neg_res
+#plot_pos_cor <- plotlist$neg_expr_pos_res
 
 ggsave(combined_plot, file = paste0(res_dir, "expression_examples_categories.pdf"))     
-ggsave(plot_neg_cor, file = paste0(res_dir, "plot_expr_neg_cor.pdf"))     
+ggsave(plot_neg_cor, file = paste0(res_dir, "plot_expr_neg_cor.pdf")) 
+#ggsave(plot_pos_cor, file = paste0(res_dir, "plot_expr_pos_cor.pdf")) 
 ggsave(cat_count, file = paste0(res_dir, "cat_count.pdf"))    
 #save correlation values   
 write_tsv(corr_res_expr_cat, file = paste0(res_dir, "corr_res_expr_cat.txt"))
@@ -1671,11 +2227,77 @@ write_tsv(corr_res_expr_cat, file = paste0(res_dir, "corr_res_expr_cat.txt"))
 ```
 
 ```{r GOterms when both genes in pairs have the same}
+res_dir <- "~/proj_Maryland_WGCNA/analysis/switches/GO_term/"
 
+pairs <- pairs_GO_equal %>% 
+  select(Var1, Var2) %>% 
+  distinct()
+
+#particularly interesting GO-terms
+#(top count in gene pairs, related to brain function and/or development?)
+
+#loop over pairs of interest's residual levels and calculate correlations (with p-values)
+cor_subset <- cpm_all_wide[, colnames(cpm_all_wide) %in% c(pairs[,1], pairs[,2]) ]
+cor_subset_genes <- colnames(cor_subset)
+
+corr_res_expr_loop = data.frame()
+counter <- 0
+
+for(i in seq(1:length(rownames(pairs)))){
+  #define genes from one pair at a time
+  geneX = pairs[i,1]
+  geneY = pairs[i,2]
+
+  #correlations and p-values: expression
+  cor_p = cor.test(cor_subset[,geneX], cor_subset[,geneY], conf.level = 0.95)
+  #correlations and p-values: residuals
+  cor_res_p = cor.test(res_poly_all_df[geneX,], res_poly_all_df[geneY,], conf.level = 0.95)
+
+  corr_res_expr_loop = rbind(corr_res_expr_loop, cbind(cor_p$estimate, cor_p$p.value, cor_res_p$estimate, cor_res_p$p.value, geneX, geneY))
+
+  counter <- counter + 1;
+                  if(counter %in% seq(0, length(rownames(pairs)), round(length(rownames(pairs))/10)))
+                      print(paste(round(counter/length(rownames(pairs))*100), "% has been processed"))
+  }
+
+# 
+# 
+names(corr_res_expr_loop)[1] <- "corr_expr"
+names(corr_res_expr_loop)[2] <- "p_expr"
+names(corr_res_expr_loop)[3] <- "corr_res"
+names(corr_res_expr_loop)[4] <- "p_res"
+names(corr_res_expr_loop)[5] <- "geneX"
+names(corr_res_expr_loop)[6] <- "geneY"
+
+corr_res_expr <-
+  as_tibble(corr_res_expr_loop) %>%
+  select(geneX, geneY, corr_expr, p_expr, corr_res, p_res ) %>% 
+  distinct()
+
+#adjust p-values for multiple testing (FDR)
+corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_res", output.col = "p_res_adj", method = "fdr")
+corr_res_expr <- adjust_pvalue(corr_res_expr, p.col = "p_expr", output.col = "p_expr_adj", method = "fdr")
+
+corr_res_expr <- corr_res_expr %>% left_join(select(pairs_GO_equal, -Var2) , by= c("geneX" = "Var1"))
 
 
 #visualise examples
 #visualise gene expression of negatively correlated pairs
+corr_res_expr_vis <- 
+  corr_res_expr_cat %>%  
+ filter(cat==c) %>% 
+  filter(geneX %in% age_trend_genes$ensembl_gene_id & 
+           geneY %in% age_trend_genes$ensembl_gene_id) %>% 
+  pivot_longer(cols = c(gene_name_X, gene_name_Y), names_to = "pair_member", values_to = "gene_name") %>% #one gene per row
+  group_by(gene_name) %>% 
+  slice_min(p_res_adj, n=1, with_ties = FALSE) %>% #make sure no gene is in more than one pair for plotting
+    ungroup() %>% 
+    pivot_wider( names_from = pair_member, values_from = gene_name) %>%
+  arrange(p_res_adj) %>%  
+  drop_na() 
+
+
+
 visualise_expr <-  cpm_all_long %>%
 mutate(pair = case_when(
 ensembl_gene_id  %in% corr_res_expr_vis[1, 1:2] ~ "1",
@@ -1907,9 +2529,10 @@ library(rrvgo) # Reduce + Visualize GO by identifying redundance based on semant
 # below vs above 12 years-old, OFC
 gene <- rownames(DE_0.01_OFC[res$adj.P.Val < 0.01,])
 # below vs above 12 years-old, CC
+gene <- rownames(DE_genes_0.01_CC[res$adj.P.Val < 0.01,])
 
 #OFC vs CC
-res <- res_region
+#res <- res_region
 gene <- rownames(res[res$adj.P.Val < 0.01,])
 
 #OFC higher than CC
@@ -1925,10 +2548,10 @@ res <- res_region
 gene <- low_OFC_FDR_001$ensembl_gene_id
 
 #Genes with significant age-coefficient
-gene <- age_trend_genes_linear$ensembl_gene_id
- analysis <- "age_trend_genes_OFC"
+#gene <- age_trend_genes_linear$ensembl_gene_id
+# analysis <- "age_trend_genes_OFC"
  #analysis <- "age_trend_genes_CC"
-res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+#res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
 #gene <- rownames(res[res$adj.P.Val < 0.05,])
 
@@ -1945,7 +2568,7 @@ gene <- unique(genemap2$ensembl_gene_id[genemap2$ensembl_gene_id %in% neg_corr_g
 #GO over-representation analysis
 ego <- enrichGO(gene          = gene,
                 #universe      = rownames(res), 
-                 universe      = age_trend_genes_linear_adj$ensembl_gene_id, 
+                # universe      = age_trend_genes_linear_adj$ensembl_gene_id, 
                 #poly_coeff_pvalue_df$ensembl_gene_id,
                 keyType = "ENSEMBL",
                 OrgDb         = org.Hs.eg.db,
@@ -2024,11 +2647,12 @@ totalGenes <- length(unique(gene))
 
 #plot enriched GO parent terms  
   parentGO_plot <- 
-    ggplot(ego_red_sign_total, 
+    ego_red_sign_total %>% dplyr::arrange(desc(n)) %>% head(n=25) %>% #in case many parent terms 
+    ggplot( 
          aes(x=n/totalGenes, y=reorder(parentTerm, n, FUN=mean))
          ) + 
     geom_point(aes(colour= p.adjust, size= n)) + 
-    viridis::scale_color_viridis() +
+    viridis::scale_color_viridis(direction = -1) +
     theme(axis.text = element_text(size=8)) +
     labs(colour= "min. p.adjust", 
          x= "GeneRatio: genes in GO parent term/ total genes of interest in GO-terms",
@@ -2037,7 +2661,7 @@ totalGenes <- length(unique(gene))
   
  ggsave(parentGO_plot, file = paste0(res_dir, "/plot_reducedGOenrich.pdf" ),
         #height = length(ego_red_sign$ID)/3, 
-        height= 12,
+      #  height= 12,
         width= 18, units = "cm")  
   
  ggsave(GO_dotplot, file = paste0(res_dir, "/plot_GOenrich.pdf" ))  
@@ -2047,12 +2671,14 @@ totalGenes <- length(unique(gene))
          width= 18, units = "cm" )  
   
 
- 
+  write_tsv(ego_red_sign_total, file = paste0(res_dir, "ego_red_sign_total.txt"))
  
 ```
 
 ```{r gene set enrichment of ranked linear coefficients }
+sig_level <- 0.01
 #analysis <- "age_trend_genes_CC/ranked_linear"
+#age_trend_genes_linear_adj <- read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt"  )
 
 analysis <- "age_trend_genes_OFC/ranked_linear"
 age_trend_genes_linear_adj <- read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt"  )
@@ -2141,15 +2767,16 @@ gse_red_sign_total <-
   gse_red_sign %>% 
   left_join(count_genes_parentTermGO, by= "parentTerm")
 
-totalGenes <- length(unique(gene))
+totalGenes <- length(unique(geneList))
 
 #plot enriched GO parent terms  
   parentGO_plot <- 
-    ggplot(gse_red_sign_total, 
+   gse_red_sign_total %>%  dplyr::arrange(desc(n)) %>% head(n=30) %>% #in case many parent terms 
+    ggplot(
          aes(x=n/totalGenes, y=reorder(parentTerm, n, FUN=mean))
          ) + 
     geom_point(aes(colour= p.adjust, size= n)) + 
-    viridis::scale_color_viridis() +
+    viridis::scale_color_viridis(direction = -1) +
     theme(axis.text = element_text(size=8)) +
     labs(colour= "min. p.adjust", 
          x= "GeneRatio: genes in GO parent term/ total genes of interest in GO-terms",
@@ -2262,15 +2889,135 @@ expr_age_GWAS_l2g_OFC <-
 #         filename = "~/proj_Maryland_WGCNA/analysis/age_trend_genes/expr_age_GWAS_l2g_OFC.pdf")
   
   
-  
+ 
   
 ```
 
+```{r GWAS overlap BD 100 kb}
+
+BD_GWAS_100kb <- read_tsv("~/PhD/GWAS-BD/PGC3/PGC3_loci_genes_100kb.txt")
+sig_level <- 0.01
+
+analysis <- "age_trend_genes_CC/overlap_BD_GWAS"
+age_trend_genes_linear_adj <- read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt"  )
+cpm_all_long <- cpm_all_long_CC
+
+# analysis <- "age_trend_genes_OFC/overlap_BD_GWAS"
+# age_trend_genes_linear_adj <- read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt"  )
+# cpm_all_long <- cpm_all_long_OFC
+# 
+
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+
+
+#filter 
+age_trend_genes_linear_adj <- 
+  age_trend_genes_linear_adj %>% 
+  left_join(select(genemap, ensembl_gene_id, external_gene_name), by= "ensembl_gene_id") %>% 
+  filter(external_gene_name != "") 
+  
+
+#genes with linear age trend within 100kb from GWAS loci, significant linear (nominal)
+age_trend_genes_linear_BD_GWAS <-   
+  age_trend_genes_linear_adj %>% 
+  filter(p< sig_level) %>% 
+  filter(ensembl_gene_id %in% BD_GWAS_100kb$ensgene) %>% 
+  filter(ensembl_gene_id %in% cpm_all_long$ensembl_gene_id) %>% 
+   filter(p< sig_level)
+  
+GOI_BD_GWAS <- age_trend_genes_linear_BD_GWAS %>% select(p, external_gene_name) %>% arrange(p) %>% head(n=6) %>% select(external_gene_name)
+
+  #visualise expression when nearest gene has age trend: OFC
+ expr_age_GWAS_closest <-
+   cpm_all_long %>% 
+   filter(gene_id %in% GOI_BD_GWAS$external_gene_name) %>% 
+   ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+    geom_point()+ 
+    facet_wrap(~gene_id, scales = "free_y") +
+    geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE) 
+ 
+#genes with linear age-trend (~%)
+#genes within GWAS loci windows (100kb)
+#GWAS-loci genes with linear age-trend (~%)
+
+total_genes <- length(unique(age_trend_genes_linear_adj$external_gene_name))
+total_trend <- length(age_trend_genes_linear_adj$external_gene_name[age_trend_genes_linear_adj$p < sig_level])
+trend_GWAS <- length(unique(age_trend_genes_linear_BD_GWAS$external_gene_name))
+GWAS_genes <- length(unique(BD_GWAS_100kb$symbol))
+
+result_linear_trend_GWAS <- tibble(.rows = 4)
+result_linear_trend_GWAS$cat <- c("expressed genes", "genes with linear age-trend", "genes within GWAS loci windows (100kb)", "GWAS-loci genes with linear age-trend")
+result_linear_trend_GWAS$value <- c(total_genes, total_trend, GWAS_genes ,trend_GWAS)
+
+ ggsave(expr_age_GWAS_closest, file = paste0(res_dir, "/expr_age_GWAS_closest.pdf" ), width = 120, units = "mm")  
+ 
+ readr::write_tsv(as_tibble(result_linear_trend_GWAS), file  = paste0(res_dir, "result_linear_trend_GWAS.txt") )
+
+  
+```
+
+
 ```{r GWAS overlap SCZ}
+
 SCZ_GWAS_100kb <- read_tsv("~/PhD/RNAseq_temporal/genes_of_interest/SCZ_genes_biomart.txt")
+sig_level <- 0.01
+
+#analysis <- "age_trend_genes_CC/overlap_SCZ_GWAS"
+#age_trend_genes_linear_adj <- read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt"  )
+#cpm_all_long <- cpm_all_long_CC
+
+analysis <- "age_trend_genes_OFC/overlap_SCZ_GWAS"
+age_trend_genes_linear_adj <- read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt"  )
+cpm_all_long <- cpm_all_long_OFC
 
 
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
+
+#filter 
+age_trend_genes_linear_adj <- 
+  age_trend_genes_linear_adj %>% 
+  left_join(select(genemap, ensembl_gene_id, external_gene_name), by= "ensembl_gene_id") %>% 
+  filter(external_gene_name != "") 
+  
+
+#genes with linear age trend within 100kb from GWAS loci, significant linear (nominal)
+age_trend_genes_linear_SCZ_GWAS <-   
+  age_trend_genes_linear_adj %>% 
+  filter(p< sig_level) %>% 
+  filter(ensembl_gene_id %in% SCZ_GWAS_100kb$`Gene stable ID` ) %>% 
+  filter(ensembl_gene_id %in% cpm_all_long$ensembl_gene_id) %>% 
+   filter(p< sig_level)
+  
+GOI_SCZ_GWAS <- age_trend_genes_linear_SCZ_GWAS %>% select(p, external_gene_name) %>% arrange(p) %>% head(n=6) %>% select(external_gene_name)
+
+  #visualise expression when nearest gene has age trend: OFC
+ expr_age_GWAS_closest <-
+   cpm_all_long %>% 
+   filter(gene_id %in% GOI_SCZ_GWAS$external_gene_name) %>% 
+   ggplot(aes(x=AGE, y= log_cpm, colour=gene_id)) +
+    geom_point()+ 
+    facet_wrap(~gene_id, scales = "free_y") +
+    geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE) 
+ 
+#genes with linear age-trend (~%)
+#genes within GWAS loci windows (100kb)
+#GWAS-loci genes with linear age-trend (~%)
+
+total_genes <- length(unique(age_trend_genes_linear_adj$external_gene_name))
+total_trend <- length(age_trend_genes_linear_adj$external_gene_name[age_trend_genes_linear_adj$p < sig_level])
+trend_GWAS <- length(unique(age_trend_genes_linear_SCZ_GWAS$external_gene_name))
+GWAS_genes <- length(unique(SCZ_GWAS_100kb$`HGNC symbol`))
+
+result_linear_trend_GWAS <- tibble(.rows = 4)
+result_linear_trend_GWAS$cat <- c("expressed genes", "genes with linear age-trend", "genes within GWAS loci windows (100kb)", "GWAS-loci genes with linear age-trend")
+result_linear_trend_GWAS$value <- c(total_genes, total_trend, GWAS_genes ,trend_GWAS)
+
+ ggsave(expr_age_GWAS_closest, file = paste0(res_dir, "/expr_age_GWAS_closest.pdf" ), width = 120, units = "mm")  
+ 
+ readr::write_tsv(as_tibble(result_linear_trend_GWAS), file  = paste0(res_dir, "result_linear_trend_GWAS.txt") )
+
+  
 ```
 
 
