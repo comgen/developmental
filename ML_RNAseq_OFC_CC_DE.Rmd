@@ -220,7 +220,9 @@ reads_OFC <- read_tsv("/Users/asbjorh/PhD/RNAseq_temporal/data/OFC/Hughes-RNA5-2
 reads_OFC$`% Dups` <- str_remove_all(string = reads_OFC$`% Dups`, pattern = "%")
 reads_OFC$`% GC` <- str_remove_all(string = reads_OFC$`% GC`, pattern = "%")
 reads_OFC$`Sample Name` <- str_remove_all(string = reads_OFC$`Sample Name`, pattern = "-BA11_clean")
-reads_OFC %>% separate(`Sample Name`, sep = "_", into = c("Sample", "read")) %>% filter(read== "1P") %>% mutate(sampleID = paste0(Sample, "-", "OFC")) %>% right_join(info_OFC, by= "sampleID") %>% dplyr::summarise(median_reads= median(`M Seqs`))
+
+reads_OFC <- 
+  reads_OFC %>% separate(`Sample Name`, sep = "_", into = c("Sample", "read")) %>% filter(read== "1P") %>% mutate(sampleID = paste0(Sample, "-", "OFC")) %>% right_join(info_OFC, by= "sampleID") #%>% dplyr::summarise(median_reads= median(`M Seqs`))
 
 
 
@@ -230,8 +232,19 @@ reads_CC$`% Dups` <- str_remove_all(string = reads_CC$`% Dups`, pattern = " %")
 reads_CC$`% GC` <- str_remove_all(string = reads_CC$`% GC`, pattern = " %")
 
 reads_CC <- reads_CC %>% separate(`Sample Name`, into = c("SampleNumber", "RNAid"), sep = "-") %>% separate(`RNAid`, into = c("sampleID", "lane", "read", "end"), sep = "_") %>% select(-c(SampleNumber, lane, end)) %>% mutate(sampleID = paste0(sampleID, "-", "CC"))
+
 reads_CC %>% right_join(info_CC, by= "sampleID") %>%  
   summarise(reads= median(`M Seqs`))
+
+reads_CC %>% right_join(info_CC, by= "sampleID") %>%  
+  summarise(mean_reads= mean(`M Seqs`), sd_reads = sd(`M Seqs`))
+
+
+#combine the 2 datasets
+reads_total <-
+  bind_rows(reads_CC, reads_OFC)
+
+reads_total %>%   summarise(mean_reads= mean(`M Seqs`), sd_reads = sd(`M Seqs`))
 
 ```
 
@@ -307,7 +320,7 @@ fit <- eBayes(fit)
 summary(decideTests(fit, p.value=sig_level))
 
 res <- topTable(fit, coef="below121", n=Inf, p.value=1)
-write.table(res, paste0(res_dir, "/de_limma_below12.txt"), sep="\t", row.names=F)
+#write.table(res, paste0(res_dir, "/de_limma_below12.txt"), sep="\t", row.names=F)
 
 
 table_sign_genes <- summary(decideTests(fit, p.value=sig_level))
@@ -437,7 +450,7 @@ sig_level <- 0.01
 
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
-
+res <- read_tsv(paste0(res_dir, "/de_limma.txt"))
 
 y <- DGEList(counts = data.filt, genes = genemap2, samples=SampleID)
 y <- calcNormFactors(y) #normLibSizes is the new name for calcNormFactors
@@ -469,7 +482,7 @@ if(identical(analysis,  "CC_DE_below12")){
 }  
 
 
-cpm_all <- cpm(y, log=TRUE, prior.count=3) #convert counts to normalised cpm
+cpm_all <- cpm(y, log=TRUE, prior.count=2) #convert counts to normalised cpm
 
 cpm_all <- cpm_all %>% t() %>% data.frame()     #have genes as columns
 cpm_all_long <- 
@@ -523,7 +536,7 @@ ggsave(volcano_OFC, file = paste0(res_dir, "/volcano.pdf" ), width = 90, units =
 Compare the 2 brain tissues
 
 ```{r DE analyses OFC vs CC}
-analysis <- "CC_DE_below12"
+#analysis <- "CC_DE_below12"
 #analysis <- "OFC_DE_below12"
 #sig_level <- 0.05
 
@@ -531,6 +544,7 @@ analysis <- "OFC_CC_DE"
 sig_level <- 0.01
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+res_region <- read_tsv( paste0(res_dir, "/de_limma.txt")) #after it has been saved, in stead of rerunning analysis
 
 counts_all <- 
   bind_cols(count_CC, count_OFC)
@@ -581,7 +595,7 @@ high_OFC_FDR_001 <- res_region %>%  filter(t < 0 & adj.P.Val < 0.01)
 low_OFC_FDR_001 <- res_region %>%  filter(t > 0 & adj.P.Val < 0.01)
 
 
-res <- read_tsv( paste0(res_dir, "/de_limma_below12.txt"))
+#res <- read_tsv( paste0(res_dir, "/de_limma_below12.txt"))
   
 ```
 
@@ -3046,6 +3060,13 @@ expr_age_GWAS_myelin_OFC <-
     geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE) 
 ```
 
+
+```{r synaptic plasticity genes}
+synaptic_plast_genes <- read_csv("~/PhD/RNAseq_relative/SCZ/functional_sets/Tuomo_synaptic_plasticity/genes_new.txt", col_names = FALSE)
+
+
+
+```
 Questions:
 X Higher variance in <12? 
 -> Could we find examples of genes with higher variance below 12?
