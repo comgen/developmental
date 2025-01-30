@@ -242,7 +242,7 @@ reads_CC %>% right_join(info_CC, by= "sampleID") %>%
 
 #combine the 2 datasets
 reads_total <-
-  bind_rows(reads_CC, reads_OFC)
+  bind_rows(reads_CC, reads_OFC, .id = "region")
 
 reads_total %>%   summarise(mean_reads= mean(`M Seqs`), sd_reads = sd(`M Seqs`))
 
@@ -253,8 +253,8 @@ Convert ensembl gene names to symbol
 clinMeta <- info_CC
 count <- count_CC
 
-# exclude outlier CC_1259 sample
-exclude <- "1259-CC"
+# exclude outlier CC_1259 sample (PCA) and CC_5282 (low counts)
+exclude <- c("1259-CC", "5282-CC")
 count <- count[, !colnames(count) %in% exclude] 
 
 SampleID <- colnames(count)[colnames(count) %in% clinMeta$sampleID] #make any other adjustments to which samples to include/ exclude here
@@ -274,7 +274,7 @@ all( rownames(colData) == colnames(data))
 
 
 library(biomaRt)
-ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="https://useast.ensembl.org")
+#ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="https://www.ensembl.org")
 
 genemap <- getBM(attributes=c("entrezgene_id","ensembl_gene_id", "external_gene_name", "gene_biotype", "go_id", "name_1006", "chromosome_name", "start_position", "end_position"), 
                  filters="ensembl_gene_id", 
@@ -295,19 +295,39 @@ data.filt <- data[keep,]
 
 ## Keep only protein-coding and lncRNA genes
 genemap2 <- genemap[rownames(data.filt),]
-genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding","lncRNA"))
+genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding", "lncRNA"))
 data.filt <- data.filt[rownames(genemap2),]
 ```
+
+```{r some more metrics}
+#violin plot of counts per gene for each sample
+rownames_to_column( data.filt, var = "ensembl_gene_id") %>% 
+  pivot_longer(cols = -1, names_to = "Sample", values_to = "counts") %>% 
+  ggplot(aes(x=Sample, y= counts)) + 
+    geom_violin() + 
+    scale_y_continuous(trans='log10')
+
+rownames_to_column( data.filt, var = "ensembl_gene_id") %>% 
+  pivot_longer(cols = -1, names_to = "Sample", values_to = "counts") %>% 
+  group_by(Sample) %>%
+  dplyr::summarise(mean_counts = mean(counts), sd_counts = sd(counts)) %>%
+  arrange(mean_counts) %>%  head()
+
+#Find that sample 5282-CC has low counts, should perhaps be removed
+```
+
+
 
 ### Differential expression analysis
 
 ```{r DE analyses childhood vs adolescence CC}
+library(EnhancedVolcano)
 analysis <- "CC_DE_below12"
 sig_level <- 0.01
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis)
 
-res <- read_tsv(paste0(res_dir, "/de_limma.txt"))
+#res <- read_tsv(paste0(res_dir, "/de_limma.txt"))
 
 y <- DGEList(counts = data.filt, genes = genemap2, samples=SampleID)
 y <- calcNormFactors(y) #normLibSizes is the new name for calcNormFactors
@@ -320,7 +340,7 @@ fit <- eBayes(fit)
 summary(decideTests(fit, p.value=sig_level))
 
 res <- topTable(fit, coef="below121", n=Inf, p.value=1)
-#write.table(res, paste0(res_dir, "/de_limma_below12.txt"), sep="\t", row.names=F)
+write.table(res, paste0(res_dir, "/de_limma_below12.txt"), sep="\t", row.names=F)
 
 
 table_sign_genes <- summary(decideTests(fit, p.value=sig_level))
@@ -335,7 +355,7 @@ DE_0.01_OFC <- res %>% filter(adj.P.Val <= 0.01)
 }  
 
 if(identical(analysis,  "CC_DE_below12")){
-  DE_genes_0.01_CC <- res %>% filter(adj.P.Val <= 0.01)
+  DE_0.01_CC <- res %>% filter(adj.P.Val <= 0.01)
 }  
 
 
@@ -367,7 +387,7 @@ cpm_all_long <- cpm_all_long %>%  rename("Age_group" = below12)
 cpm_all_long_CC <- cpm_all_long
 
 #save cpm values
-#write_tsv(select(cpm_all_long_CC, -CDEATHOFF), file = paste0("~/proj_Maryland_WGCNA/analysis/", "cpm_all_long_CC.txt") )
+write_tsv(select(cpm_all_long_CC, -CDEATHOFF), file = paste0("~/proj_Maryland_WGCNA/analysis/", "cpm_all_long_CC.txt") )
 
 
 GOI_CC <- c("HHATL", "TSPAN8", "TKT", "SLC6A11", "NCAN", "CERS6")
@@ -415,7 +435,7 @@ all( rownames(colData) == colnames(data))
 
 
 library(biomaRt)
-ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="https://useast.ensembl.org")
+#ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="https://www.ensembl.org")
 
 genemap <- getBM(attributes=c("entrezgene_id","ensembl_gene_id", "external_gene_name", "gene_biotype", "go_id", "name_1006", "chromosome_name", "start_position", "end_position"), 
                  filters="ensembl_gene_id", 
@@ -436,7 +456,7 @@ data.filt <- data[keep,]
 
 ## Keep only protein-coding and lncRNA genes
 genemap2 <- genemap[rownames(data.filt),]
-genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding","lncRNA"))
+genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding"))
 data.filt <- data.filt[rownames(genemap2),]
 colData.filt <- subset(colData, rownames(colData) %in% SampleID )
 
@@ -448,9 +468,8 @@ colData.filt <- subset(colData, rownames(colData) %in% SampleID )
 analysis <- "OFC_DE_below12"
 sig_level <- 0.01
 
-
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
-res <- read_tsv(paste0(res_dir, "/de_limma.txt"))
+#res <- read_tsv(paste0(res_dir, "/de_limma.txt"))
 
 y <- DGEList(counts = data.filt, genes = genemap2, samples=SampleID)
 y <- calcNormFactors(y) #normLibSizes is the new name for calcNormFactors
@@ -463,7 +482,7 @@ fit <- eBayes(fit)
 summary(decideTests(fit, p.value=sig_level))
 
 res <- topTable(fit, coef="below121", n=Inf, p.value=1)
-#write.table(res, paste0(res_dir, "/de_limma_OFC_below12.txt"), sep="\t", row.names=F)
+write.table(res, paste0(res_dir, "/de_limma_OFC_below12.txt"), sep="\t", row.names=F)
 
 
 table_sign_genes <- summary(decideTests(fit, p.value=sig_level))
@@ -478,7 +497,7 @@ DE_0.01_OFC <- res %>% filter(adj.P.Val <= 0.01)
 }  
 
 if(identical(analysis,  "CC_DE_below12")){
-  DE_genes_0.01_CC <- res %>% filter(adj.P.Val <= 0.01)
+  DE_0.01_CC <- res %>% filter(adj.P.Val <= 0.01)
 }  
 
 
@@ -542,9 +561,10 @@ Compare the 2 brain tissues
 
 analysis <- "OFC_CC_DE"
 sig_level <- 0.01
+exclude <- c("1259-CC", "5282-CC")
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
-res_region <- read_tsv( paste0(res_dir, "/de_limma.txt")) #after it has been saved, in stead of rerunning analysis
+#res_region <- read_tsv( paste0(res_dir, "/de_limma.txt")) #after it has been saved, in stead of rerunning analysis
 
 counts_all <- 
   bind_cols(count_CC, count_OFC)
@@ -555,7 +575,7 @@ colData_all <-  bind_rows("OFC"=info_OFC,
                           "CC"= select(info_CC, -CDEATHOFF),
                           .id = "region")
  
-colData_all <- colData_all %>% filter(sampleID != exclude) 
+colData_all <- colData_all %>% filter(!sampleID %in% exclude) 
 
 sample_all <-  colnames(counts_all)[colnames(counts_all) %in% colData_all$sampleID]
 
@@ -569,7 +589,7 @@ counts_all.filt <- counts_all[keep,]
 genemap2 <- genemap[rownames(counts_all.filt),]
 genemap2 <- subset(genemap2, gene_biotype %in% c("protein_coding","lncRNA"))
 
-counts_all.filt <- counts_all.filt[rownames(counts_all.filt) %in% rownames(genemap2), colnames(counts_all.filt) != exclude]
+counts_all.filt <- counts_all.filt[rownames(counts_all.filt) %in% rownames(genemap2), !colnames(counts_all.filt) %in% exclude]
 
 y <- DGEList(counts = counts_all.filt, genes = genemap2, samples=sample_all)
 y <- calcNormFactors(y) #normLibSizes is the new name for calcNormFactors
@@ -584,10 +604,11 @@ summary(decideTests(fit, p.value=sig_level))
 table_sign_genes <- summary(decideTests(fit, p.value=sig_level))
 
 #save table with number of genes
-#kableExtra::kable(table_sign_genes, "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
- # kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
+kableExtra::kable(table_sign_genes, 
+                  "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
+  kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
 
-#res_region <- topTable(fit, coef="regionOFC", n=Inf, p.value=1)
+res_region <- topTable(fit, coef="regionOFC", n=Inf, p.value=1)
 
 #write.table(res_region, paste0(res_dir, "/de_limma.txt"), sep="\t", row.names=F)
 
@@ -595,7 +616,7 @@ high_OFC_FDR_001 <- res_region %>%  filter(t < 0 & adj.P.Val < 0.01)
 low_OFC_FDR_001 <- res_region %>%  filter(t > 0 & adj.P.Val < 0.01)
 
 
-#res <- read_tsv( paste0(res_dir, "/de_limma_below12.txt"))
+
   
 ```
 
@@ -765,7 +786,7 @@ plot_expr <-
   theme_bw()
 
 
-ggsave(plot_expr, file = paste0(res_dir, "/plot_expr_top10sign.pdf" ) , width = 120, units = "mm")  
+#ggsave(plot_expr, file = paste0(res_dir, "/plot_expr_top10sign.pdf" ) , width = 120, units = "mm")  
   
 #Presentation: plot CC genes by age
 plot_expr_age <- cpm_all_long_CC %>% 
@@ -786,7 +807,7 @@ plot_expr_age <-
      geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE, colour= "grey") +
   scale_colour_manual(values=col[c(3,4)])
 
-ggsave(plot_expr_age, file = paste0(res_dir, "/plot_expr_age.pdf" ) , width = 120, units = "mm")  
+#ggsave(plot_expr_age, file = paste0(res_dir, "/plot_expr_age.pdf" ) , width = 120, units = "mm")  
  
 
 ```
@@ -887,9 +908,9 @@ plot_expr_examples <-
   labs(title= paste0("Normalised expression, example genes DE in CC vs OFC")) +
   theme_bw()
 
-ggsave(plot_expr_highOFC, file = paste0(res_dir, "/plot_expr_top8sign_highOFC.pdf" ), width = 180, units = "mm")  
-ggsave(plot_expr_highCC, file = paste0(res_dir, "/plot_expr_top8sign_highCC.pdf" ), width = 180, units = "mm")  
-ggsave(plot_expr_examples, file = paste0(res_dir, "/plot_expr_examples.pdf" ), width = 120, units = "mm")
+#ggsave(plot_expr_highOFC, file = paste0(res_dir, "/plot_expr_top8sign_highOFC.pdf" ), width = 180, units = "mm")  
+#ggsave(plot_expr_highCC, file = paste0(res_dir, "/plot_expr_top8sign_highCC.pdf" ), width = 180, units = "mm")  
+#ggsave(plot_expr_examples, file = paste0(res_dir, "/plot_expr_examples.pdf" ), width = 120, units = "mm")
 
 volcano_region <- 
   EnhancedVolcano(res_region,
@@ -905,7 +926,7 @@ volcano_region <-
 
     legendIconSize = 1, legendPosition= "none")
 
-ggsave(volcano_region, file = paste0(res_dir, "/volcano_region.pdf" ), width = 90, units = "mm")  
+#ggsave(volcano_region, file = paste0(res_dir, "/volcano_region.pdf" ), width = 90, units = "mm")  
 ```
 
 
@@ -1035,7 +1056,7 @@ sd_diff_GO<-
     facet_wrap(~name_1006, scales = "free_y") +
     geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE)
 
-ggsave(sd_diff_GO, file = paste0(res_dir, "sd_diff_GO_expr.pdf"))
+#ggsave(sd_diff_GO, file = paste0(res_dir, "sd_diff_GO_expr.pdf"))
 
 #save cpm values
 #write_tsv(select(cpm_all_long, -CDEATHOFF), file = paste0(res_dir, "cpm_all_long.txt") )
@@ -1126,8 +1147,8 @@ plot_expr_sd_diff <-
   scale_colour_manual(values=col[c(3,4)])
 
 
-ggsave(hist_sd_diff_dir, height = 60, width = 90, units = "mm", file = paste0(res_dir, "hist_sd_diff_dir.pdf"))
-ggsave(plot_expr_sd_diff, width = 120, units = "mm", file = paste0(res_dir, "plot_expr_sd_diff.pdf"))
+#ggsave(hist_sd_diff_dir, height = 60, width = 90, units = "mm", file = paste0(res_dir, "hist_sd_diff_dir.pdf"))
+#ggsave(plot_expr_sd_diff, width = 120, units = "mm", file = paste0(res_dir, "plot_expr_sd_diff.pdf"))
 
 
 ```
@@ -1395,10 +1416,10 @@ neg_corr_membrane <- cor_paralogs_neuro_sim %>%
 
 Gene subset: genes with changes in expression from early childhood to adulthood
 ```{r age trend significant coefficient}
-#analysis <- "age_trend_genes_OFC"
-#cpm_all_long <- cpm_all_long_OFC
-analysis <- "age_trend_genes_CC"
-cpm_all_long <- cpm_all_long_CC
+analysis <- "age_trend_genes_OFC"
+cpm_all_long <- cpm_all_long_OFC
+#analysis <- "age_trend_genes_CC"
+#cpm_all_long <- cpm_all_long_CC
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
@@ -1553,7 +1574,7 @@ plot_expression_examples <- arrangeGrob(grobs = plot_list_expression_examples,
                                                               c(3,3))
              )
 
-ggsave(plot_expression_examples,  file= paste0(res_dir, "plot_expression_examples.pdf"))
+#ggsave(plot_expression_examples,  file= paste0(res_dir, "plot_expression_examples.pdf"))
 
 #only mouse from Li paper
 plot_list_expression_examples_Li <- 
@@ -1567,7 +1588,7 @@ plot_list_expression_examples_Li <-
   labs(title = "Li_2020_mouse (4 genes)" )+
   theme(legend.position = "none") 
   
-ggsave(plot_list_expression_examples_Li,  file= paste0(res_dir, "plot_list_expression_examples_Li.pdf"))
+#ggsave(plot_list_expression_examples_Li,  file= paste0(res_dir, "plot_list_expression_examples_Li.pdf"))
 
 
 
@@ -1597,9 +1618,9 @@ plot_myelin_trend_CC <-
   theme(legend.position = "none")
 
 
-if(identical(res_dir,  "~/proj_Maryland_WGCNA/analysis/CC_DE_below12/")){
-ggsave(plot_myelin_trend_CC, file= paste0(res_dir, "plot_myelin_trend_CC.pdf"))
-       }  
+#if(identical(res_dir,  "~/proj_Maryland_WGCNA/analysis/CC_DE_below12/")){
+#ggsave(plot_myelin_trend_CC, file= paste0(res_dir, "plot_myelin_trend_CC.pdf"))
+#       }  
 
 
 #are there any with statistical significant age trend genes among the previously hypothesised?
@@ -1823,7 +1844,7 @@ plot_list_top_terms[[i]] <-
 plot_4_top_terms <- arrangeGrob(grobs = plot_list_top_terms 
                            )
 
-ggsave(plot_4_top_terms,  file= paste0(res_dir, "plot_linear_4_top_terms.pdf"))
+#ggsave(plot_4_top_terms,  file= paste0(res_dir, "plot_linear_4_top_terms.pdf"))
 
 
 ```
@@ -2230,12 +2251,12 @@ combined_plot <-   ggarrange(plotlist = plotlist)
 plot_neg_cor <- plotlist$neg_expr_neg_res
 #plot_pos_cor <- plotlist$neg_expr_pos_res
 
-ggsave(combined_plot, file = paste0(res_dir, "expression_examples_categories.pdf"))     
-ggsave(plot_neg_cor, file = paste0(res_dir, "plot_expr_neg_cor.pdf")) 
+#ggsave(combined_plot, file = paste0(res_dir, "expression_examples_categories.pdf"))     
+#ggsave(plot_neg_cor, file = paste0(res_dir, "plot_expr_neg_cor.pdf")) 
 #ggsave(plot_pos_cor, file = paste0(res_dir, "plot_expr_pos_cor.pdf")) 
-ggsave(cat_count, file = paste0(res_dir, "cat_count.pdf"))    
+#ggsave(cat_count, file = paste0(res_dir, "cat_count.pdf"))    
 #save correlation values   
-write_tsv(corr_res_expr_cat, file = paste0(res_dir, "corr_res_expr_cat.txt"))
+#write_tsv(corr_res_expr_cat, file = paste0(res_dir, "corr_res_expr_cat.txt"))
 
 #write.csv(corr_res_expr_cat, file = paste0(res_dir, "corr_res_expr_cat.txt"), sep  = "\t")
 ```
@@ -2541,13 +2562,14 @@ library(rrvgo) # Reduce + Visualize GO by identifying redundance based on semant
 #MF: Molecular Function
 
 # below vs above 12 years-old, OFC
-gene <- rownames(DE_0.01_OFC[res$adj.P.Val < 0.01,])
-# below vs above 12 years-old, CC
-gene <- rownames(DE_genes_0.01_CC[res$adj.P.Val < 0.01,])
+gene <- rownames(DE_0.01_OFC[DE_0.01_OFC$adj.P.Val < 0.01,])
+analysis <- "OFC_DE_below12"
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
-#OFC vs CC
-#res <- res_region
-gene <- rownames(res[res$adj.P.Val < 0.01,])
+# below vs above 12 years-old, CC
+gene <- rownames(DE_0.01_CC[DE_0.01_CC$adj.P.Val < 0.01,])
+analysis <- "CC_DE_below12"
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
 #OFC higher than CC
 analysis <- "higherOFC"
@@ -2674,15 +2696,15 @@ totalGenes <- length(unique(gene))
          )
   
  ggsave(parentGO_plot, file = paste0(res_dir, "/plot_reducedGOenrich.pdf" ),
-        #height = length(ego_red_sign$ID)/3, 
-      #  height= 12,
-        width= 18, units = "cm")  
+       height = length(ego_red_sign$ID)/3, 
+       #height= 12,
+      width= 18, units = "cm")  
   
- ggsave(GO_dotplot, file = paste0(res_dir, "/plot_GOenrich.pdf" ))  
+ #ggsave(GO_dotplot, file = paste0(res_dir, "/plot_GOenrich.pdf" ))  
    
   ggsave(GO_dotplot, file = paste0(res_dir, "/plot_GOenrich.pdf"),
-         height= 30,
-         width= 18, units = "cm" )  
+       height= 30,
+        width= 18, units = "cm" )  
   
 
   write_tsv(ego_red_sign_total, file = paste0(res_dir, "ego_red_sign_total.txt"))
@@ -2691,8 +2713,8 @@ totalGenes <- length(unique(gene))
 
 ```{r gene set enrichment of ranked linear coefficients }
 sig_level <- 0.01
-#analysis <- "age_trend_genes_CC/ranked_linear"
-#age_trend_genes_linear_adj <- read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt"  )
+analysis <- "age_trend_genes_CC/ranked_linear"
+age_trend_genes_linear_adj <- read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt"  )
 
 analysis <- "age_trend_genes_OFC/ranked_linear"
 age_trend_genes_linear_adj <- read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt"  )
@@ -2709,7 +2731,7 @@ geneList <- c(
  # abs(
     linear_nom$lin_coeff)
  # ) #Do not use absolute if you want to separate negative from positive trend (i.e. scoreType= "std") 
-#Experiance: When absolute(lin_coeff) and "scoreType= "pos"" is used, we get no significant enrichment
+#Experience: When absolute(lin_coeff) and "scoreType= "pos"" is used, we get no significant enrichment
 
 names(geneList) <- linear_nom$ensembl_gene_id
 geneList <- sort(geneList, decreasing =T)
@@ -2798,8 +2820,8 @@ totalGenes <- length(unique(geneList))
          )
   
  ggsave(parentGO_plot, file = paste0(res_dir, "/plot_parentGOenrich.pdf" ),
-        #height = length(gse_red_sign$ID)/3, 
-        height= 12,
+        height = length(gse_red_sign$ID)/3, 
+  #height= 12,
         width= 18, units = "cm")  
   
  ggsave(GO_dotplot, file = paste0(res_dir, "/plot_GOenrich.pdf" ))  
@@ -2963,9 +2985,9 @@ result_linear_trend_GWAS <- tibble(.rows = 4)
 result_linear_trend_GWAS$cat <- c("expressed genes", "genes with linear age-trend", "genes within GWAS loci windows (100kb)", "GWAS-loci genes with linear age-trend")
 result_linear_trend_GWAS$value <- c(total_genes, total_trend, GWAS_genes ,trend_GWAS)
 
- ggsave(expr_age_GWAS_closest, file = paste0(res_dir, "/expr_age_GWAS_closest.pdf" ), width = 120, units = "mm")  
+# ggsave(expr_age_GWAS_closest, file = paste0(res_dir, "/expr_age_GWAS_closest.pdf" ), width = 120, units = "mm")  
  
- readr::write_tsv(as_tibble(result_linear_trend_GWAS), file  = paste0(res_dir, "result_linear_trend_GWAS.txt") )
+ #readr::write_tsv(as_tibble(result_linear_trend_GWAS), file  = paste0(res_dir, "result_linear_trend_GWAS.txt") )
 
   
 ```
@@ -3027,9 +3049,9 @@ result_linear_trend_GWAS <- tibble(.rows = 4)
 result_linear_trend_GWAS$cat <- c("expressed genes", "genes with linear age-trend", "genes within GWAS loci windows (100kb)", "GWAS-loci genes with linear age-trend")
 result_linear_trend_GWAS$value <- c(total_genes, total_trend, GWAS_genes ,trend_GWAS)
 
- ggsave(expr_age_GWAS_closest, file = paste0(res_dir, "/expr_age_GWAS_closest.pdf" ), width = 120, units = "mm")  
+# ggsave(expr_age_GWAS_closest, file = paste0(res_dir, "/expr_age_GWAS_closest.pdf" ), width = 120, units = "mm")  
  
- readr::write_tsv(as_tibble(result_linear_trend_GWAS), file  = paste0(res_dir, "result_linear_trend_GWAS.txt") )
+# readr::write_tsv(as_tibble(result_linear_trend_GWAS), file  = paste0(res_dir, "result_linear_trend_GWAS.txt") )
 
   
 ```
