@@ -31,7 +31,7 @@ rownames <- base::rownames
 
 col <- c("#3B4992FF", "#EE0000FF", "#D95F02", "#1B9E77", "#440154FF", "#31688EFF", "#35B779FF", "#FDE725FF")
 
-#IA has suggested using blue (#E64B35FF) and red (#8491B4FF) whenever we do a direct comprison between CC and OFC
+#IA has suggested using blue (#E64B35FF) and red (#8491B4FF) whenever we do a direct comparison between CC and OFC
 ```
 
 
@@ -274,7 +274,7 @@ all( rownames(colData) == colnames(data))
 
 
 library(biomaRt)
-#ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="https://www.ensembl.org")
+ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl", host="https://www.ensembl.org")
 
 genemap <- getBM(attributes=c("entrezgene_id","ensembl_gene_id", "external_gene_name", "gene_biotype", "go_id", "name_1006", "chromosome_name", "start_position", "end_position"), 
                  filters="ensembl_gene_id", 
@@ -288,7 +288,7 @@ rownames(genemap) <- genemap$ensembl_gene_id #rownames in case dataframe is need
 ## Remove lowly expressed genes
 
 #library(edgeR)
-keep <- filterByExpr(data, design=colData$below12 #we don't want to have design here, do we? Because if genes are not at all expressed in either category it will be filtered out?  -> The opposite is true! Group-aware filtering makes sure there is expression in enough samples within at least one group. 
+keep <- filterByExpr(data, design=colData$below12 #Group-aware filtering makes sure there is expression in enough samples within at least one group. 
 )
 data.filt <- data[keep,]
 
@@ -323,12 +323,13 @@ rownames_to_column( data.filt, var = "ensembl_gene_id") %>%
 ```{r DE analyses childhood vs adolescence CC}
 library(EnhancedVolcano)
 analysis <- "CC_DE_below12"
-sig_level <- 0.01
+#sig_level <- 0.01
+sig_level   <- 0.05
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis)
+#res <- read_tsv(paste0(res_dir, "/de_limma_CC_below12.txt"))
 
-#res <- read_tsv(paste0(res_dir, "/de_limma.txt"))
-
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/", "FDR_",sig_level, "/")
 y <- DGEList(counts = data.filt, genes = genemap2, samples=SampleID)
 y <- calcNormFactors(y) #normLibSizes is the new name for calcNormFactors
 
@@ -344,20 +345,22 @@ write.table(res, paste0(res_dir, "/de_limma_below12.txt"), sep="\t", row.names=F
 
 
 table_sign_genes <- summary(decideTests(fit, p.value=sig_level))
-#kableExtra::kable(table_sign_genes, "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
- # kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
+kableExtra::kable(table_sign_genes, "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
+  kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
 
 #write.table(res, paste0(res_dir,"_",analysis, "/de_limma.txt"), sep="\t", row.names=F)
 
 
 if(identical(analysis,  "OFC_DE_below12")){
-DE_0.01_OFC <- res %>% filter(adj.P.Val <= 0.01)
+DE_OFC <- res %>% filter(adj.P.Val <= sig_level)
 }  
 
 if(identical(analysis,  "CC_DE_below12")){
-  DE_0.01_CC <- res %>% filter(adj.P.Val <= 0.01)
+  DE_CC <- res %>% filter(adj.P.Val <= sig_level)
 }  
 
+DE_CC_high_children <- DE_CC %>% filter(t > 0 & adj.P.Val < sig_level)
+DE_CC_low_children <- DE_CC %>% filter(t < 0 & adj.P.Val < sig_level)
 
 cpm_all <- cpm(y, log=TRUE, prior.count=3) #convert counts to normalised cpm
 
@@ -387,7 +390,7 @@ cpm_all_long <- cpm_all_long %>%  rename("Age_group" = below12)
 cpm_all_long_CC <- cpm_all_long
 
 #save cpm values
-write_tsv(select(cpm_all_long_CC, -CDEATHOFF), file = paste0("~/proj_Maryland_WGCNA/analysis/", "cpm_all_long_CC.txt") )
+#write_tsv(select(cpm_all_long_CC, -CDEATHOFF), file = paste0("~/proj_Maryland_WGCNA/analysis/", "cpm_all_long_CC.txt") )
 
 
 GOI_CC <- c("HHATL", "TSPAN8", "TKT", "SLC6A11", "NCAN", "CERS6")
@@ -397,7 +400,7 @@ volcano_CC <-
                 lab = res$external_gene_name, ylab = bquote(- ~Log[10]~ 'p (adj)'), 
                 title= "childhood vs adolescence" , subtitle = "differential expression: CC",
                 x = 'logFC',
-                y = 'adj.P.Val', pCutoff = 5e-2,
+                y = 'adj.P.Val', pCutoff = sig_level,
                 FCcutoff = 0.5,  
               selectLab = GOI_CC,
                 boxedLabels = TRUE,
@@ -466,10 +469,12 @@ colData.filt <- subset(colData, rownames(colData) %in% SampleID )
 
 ```{r DE analyses childhood vs adolescence OFC}
 analysis <- "OFC_DE_below12"
-sig_level <- 0.01
-
+#sig_level <- 0.01
+sig_level   <- 0.05
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
-#res <- read_tsv(paste0(res_dir, "/de_limma.txt"))
+res <- read_tsv(paste0(res_dir, "de_limma_OFC_below12.txt"))
+
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/", "FDR_",sig_level, "/")
 
 y <- DGEList(counts = data.filt, genes = genemap2, samples=SampleID)
 y <- calcNormFactors(y) #normLibSizes is the new name for calcNormFactors
@@ -482,22 +487,21 @@ fit <- eBayes(fit)
 summary(decideTests(fit, p.value=sig_level))
 
 res <- topTable(fit, coef="below121", n=Inf, p.value=1)
-write.table(res, paste0(res_dir, "/de_limma_OFC_below12.txt"), sep="\t", row.names=F)
+#write.table(res, paste0(res_dir, "/de_limma_OFC_below12.txt"), sep="\t", row.names=F)
 
 
 table_sign_genes <- summary(decideTests(fit, p.value=sig_level))
-#kableExtra::kable(table_sign_genes, "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
- # kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
+write.table(table_sign_genes, file = paste0(res_dir, "/sign.genes.txt"), sep = "\t", row.names = T, col.names = T)
 
-#write.table(res, paste0(res_dir,"_",analysis, "/de_limma.txt"), sep="\t", row.names=F)
+write.table(res, paste0(res_dir,"_",analysis, "/de_limma.txt"), sep="\t", row.names=F)
 
 
 if(identical(analysis,  "OFC_DE_below12")){
-DE_0.01_OFC <- res %>% filter(adj.P.Val <= 0.01)
+DE_OFC <- res %>% filter(adj.P.Val <= sig_level)
 }  
 
 if(identical(analysis,  "CC_DE_below12")){
-  DE_0.01_CC <- res %>% filter(adj.P.Val <= 0.01)
+  DE_CC <- res %>% filter(adj.P.Val <= sig_level)
 }  
 
 
@@ -555,35 +559,45 @@ ggsave(volcano_OFC, file = paste0(res_dir, "/volcano.pdf" ), width = 90, units =
 Compare the 2 brain tissues
 
 ```{r DE analyses OFC vs CC}
-#analysis <- "CC_DE_below12"
-#analysis <- "OFC_DE_below12"
-#sig_level <- 0.05
-
 analysis <- "OFC_CC_DE"
-sig_level <- 0.01
+#sig_level <- 0.01
+sig_level <- 0.05
 exclude <- c("1259-CC", "5282-CC")
 
-res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/", "FDR_",sig_level, "/")
 #res_region <- read_tsv( paste0(res_dir, "/de_limma.txt")) #after it has been saved, in stead of rerunning analysis
+
+#create a new directory with sig_level if it doesn't exist
+if (!dir.exists(res_dir)) {
+  dir.create(res_dir, recursive = TRUE)
+}
 
 counts_all <- 
   bind_cols(count_CC, count_OFC)
 
 counts_all <- na.omit(counts_all)
+#remove from counts_all any samples that are not in exclude
+counts_all <- counts_all[, !colnames(counts_all) %in% exclude]
 
 colData_all <-  bind_rows("OFC"=info_OFC,
                           "CC"= select(info_CC, -CDEATHOFF),
                           .id = "region")
  
 colData_all <- colData_all %>% filter(!sampleID %in% exclude) 
+#only keep samples in colData_all that are in counts_all
+colData_all <- colData_all %>% filter(sampleID %in% colnames(counts_all)) #only keep samples in colData_all that are in counts_all
 
-sample_all <-  colnames(counts_all)[colnames(counts_all) %in% colData_all$sampleID]
+colData_all <- colData_all %>% column_to_rownames(var="sampleID") #to make a dataframe with rownames
+colData_all <- colData_all[colnames(counts_all),] #order the sample names the same as the expression data
+
+
+sample_all <-  colnames(counts_all)[colnames(counts_all) %in% rownames(colData_all)]
+
 
 design <- model.matrix(~ region, data = colData_all)
-keep <- filterByExpr(counts_all, design = design) #keep genes that have decent expression in at least one group
-                     
-# keep <- filterByExpr(counts_all #default is remove genes with very low in >30% of samples. Removes genes completely without expression in one of the regions. Is that what we want? 
-# )
+keep <- filterByExpr(counts_all, design = design ) #keep genes that have decent expression in at least one group
+ 
+
 counts_all.filt <- counts_all[keep,]
 
 genemap2 <- genemap[rownames(counts_all.filt),]
@@ -605,17 +619,21 @@ table_sign_genes <- summary(decideTests(fit, p.value=sig_level))
 
 #save table with number of genes
 kableExtra::kable(table_sign_genes, 
-                  "latex", caption = paste("Number of significant genes", "FDR<", sig_level)) %>% 
+                  "latex"#, 
+             #     caption = paste("Number of significant genes,", "FDR", sig_level)
+                  ) %>% 
   kableExtra::save_kable(paste0(res_dir, "/sign.genes.png"))
 
 res_region <- topTable(fit, coef="regionOFC", n=Inf, p.value=1)
 
-#write.table(res_region, paste0(res_dir, "/de_limma.txt"), sep="\t", row.names=F)
+write.table(res_region, paste0(res_dir, "/de_limma.txt"), sep="\t", row.names=F)
 
-high_OFC_FDR_001 <- res_region %>%  filter(t < 0 & adj.P.Val < 0.01)
-low_OFC_FDR_001 <- res_region %>%  filter(t > 0 & adj.P.Val < 0.01)
+high_OFC_FDR <- res_region %>%  filter(t > 0 & adj.P.Val < sig_level)
+low_OFC_FDR <- res_region %>%  filter(t < 0 & adj.P.Val < sig_level)
 
-
+#save high and low OFC FDR genes
+write.table(high_OFC_FDR, paste0(res_dir, "/high_OFC.txt"), sep="\t", row.names=F)
+write.table(low_OFC_FDR, paste0(res_dir, "/low_OFC.txt"), sep="\t", row.names=F)
 
   
 ```
@@ -651,7 +669,7 @@ axis_set$chromosome_name <- factor(axis_set$chromosome_name, levels = chr_order)
 
 #plot Manhattan plot
 #find the nomiinal limmit for FDR significance
-sig <- res %>% filter(adj.P.Val < 0.01) %>% slice_max(P.Value) %>% select(P.Value)
+sig <- res %>% filter(adj.P.Val < sig_level) %>% slice_max(P.Value) %>% select(P.Value)
 sig <- sig$P.Value
 
 manhplot <- 
@@ -935,7 +953,9 @@ Are there more variance in lower ages, i.e. need for stricter balance in adolesc
 library(rstatix)
 
 DE_genes_0.05 <- 
-  res %>% rownames_to_column(var = "gene_id") %>% filter(adj.P.Val < 0.05) %>% select(external_gene_name)
+  res %>% 
+  rownames_to_column(var = "gene_id") %>% 
+  filter(adj.P.Val < 0.05) %>% select(external_gene_name)
 
 #look at 10 most significant genes
 
@@ -1005,7 +1025,8 @@ genes_sd_diff <-
 
 #It could be interesting to analyse all genes 1-by-1 and test for differences in variance of expression in children vs adolescents. This could be an indication of genes that come under strong stoichiometric constraint during adolescence
 
-sd_diff_genes<-   df_long_sd %>%  
+sd_diff_genes<-   
+  df_long_sd %>%  
     pivot_wider(id_cols = gene_id, names_from = Age_group, values_from = sd) %>% 
     mutate(sd_diff= `>12`- `<12`) %>%  
     arrange(sd_diff) %>% 
@@ -1296,6 +1317,8 @@ paralogs <- getBM(
   filters = "ensembl_gene_id", 
   values = genemap2$ensembl_gene_id)
 
+
+
 paralogs_neuro <-
   paralogs_neuro %>% tidyr::drop_na()
 
@@ -1416,10 +1439,10 @@ neg_corr_membrane <- cor_paralogs_neuro_sim %>%
 
 Gene subset: genes with changes in expression from early childhood to adulthood
 ```{r age trend significant coefficient}
-analysis <- "age_trend_genes_OFC"
-cpm_all_long <- cpm_all_long_OFC
-#analysis <- "age_trend_genes_CC"
-#cpm_all_long <- cpm_all_long_CC
+#analysis <- "age_trend_genes_OFC"
+#cpm_all_long <- cpm_all_long_OFC
+analysis <- "age_trend_genes_CC"
+cpm_all_long <- cpm_all_long_CC
 
 res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
 
@@ -1475,7 +1498,7 @@ poly_coeff_pvalue_df$lin_coeff <- as.vector(lin_coeff_value_mtx)
 
 coeff_hist <- poly_coeff_pvalue_df %>% 
   pivot_longer(cols = -c("ensembl_gene_id", "lin_coeff"), names_to = "coeff", values_to = "p") %>% 
-  filter(coeff != "(Intercept)", p<0.01) %>%  
+  filter(coeff != "(Intercept)", p<sig_level) %>%  
   ggplot() + 
   geom_histogram(mapping = aes(x=p, fill= coeff), colour = "black") +
   scale_fill_brewer(palette= "Dark2")
@@ -1484,18 +1507,18 @@ coeff_hist <- poly_coeff_pvalue_df %>%
 age_trend <- poly_coeff_pvalue_df %>% 
   pivot_longer(cols = -c("ensembl_gene_id", lin_coeff), names_to = "coeff", values_to = "p") %>% 
   filter(coeff != "(Intercept)") %>% 
-  filter(p<0.01) 
+  filter(p<sig_level) 
 
 age_trend_linear <- poly_coeff_pvalue_df %>% 
   select(ensembl_gene_id, lin_coeff, `poly(AGE, 2)1`) %>% 
   rename("p" = `poly(AGE, 2)1`) 
 
 age_trend_genes <-  age_trend %>% 
-  filter(p< 0.01) %>% 
+  filter(p< sig_level) %>% 
   select(ensembl_gene_id) %>% distinct()
 
 age_trend_genes_linear <- age_trend %>% 
-  filter(p< 0.01 & coeff=="poly(AGE, 2)1") %>% 
+  filter(p< sig_level & coeff=="poly(AGE, 2)1") %>% 
   select(ensembl_gene_id) %>% distinct()
 
 age_trend_genes_linear_adj <- 
@@ -1518,14 +1541,14 @@ age_trend_linear <-
    # breaks= vis_genes, 
     palette = "Dark2" )
 
-ggsave(coeff_hist,  file = paste0(res_dir, "/coeff_hist.pdf" ))    
-ggsave(age_trend_linear,  file = paste0(res_dir, "/plot_top10_AGE_linear.pdf" )) 
+#ggsave(coeff_hist,  file = paste0(res_dir, "/coeff_hist.pdf" ))    
+#ggsave(age_trend_linear,  file = paste0(res_dir, "/plot_top10_AGE_linear.pdf" )) 
 
-write_tsv(age_trend_genes, file = paste0(res_dir, "/age_trend_genes.txt" ))
-write_tsv(age_trend_genes_linear_adj, file = paste0(res_dir, "/age_trend_linear.txt" ))
-write_tsv(poly_coeff_pvalue_df, file = paste0(res_dir, "/poly_coeff_pvalue_df.txt" ))
+#write_tsv(age_trend_genes, file = paste0(res_dir, "/age_trend_genes.txt" ))
+#write_tsv(age_trend_genes_linear_adj, file = paste0(res_dir, "/age_trend_linear.txt" ))
+#write_tsv(poly_coeff_pvalue_df, file = paste0(res_dir, "/poly_coeff_pvalue_df.txt" ))
 
-write.csv(res_poly_all_df, file = paste0(res_dir, "/res_poly_all_df.txt" ))
+#write.csv(res_poly_all_df, file = paste0(res_dir, "/res_poly_all_df.txt" ))
 ```
 
 ### Visualise expression of genes with possible age trend
@@ -1626,13 +1649,13 @@ plot_myelin_trend_CC <-
 #are there any with statistical significant age trend genes among the previously hypothesised?
 age_trend_genes_linear_adj_OFC %>%  
   left_join(dplyr::select(genemap, ensembl_gene_id, external_gene_name), by= "ensembl_gene_id") %>% f
-ilter(p_linear_adj < 0.01) %>% 
+ilter(p_linear_adj < sig_level) %>% 
   filter(external_gene_name %in% 
            c(Li_2020_mouse, find_paper, high_adult_cellXgene$gene_id)) 
 
 age_trend_genes_linear_adj_CC %>%  
   left_join(dplyr::select(genemap, ensembl_gene_id, external_gene_name), by= "ensembl_gene_id") %>% f
-ilter(p_linear_adj < 0.01) %>% 
+ilter(p_linear_adj < sig_level) %>% 
   filter(external_gene_name %in% 
            c(Li_2020_mouse, find_paper, high_adult_cellXgene$gene_id)) 
 
@@ -1646,24 +1669,33 @@ ilter(p_linear_adj < 0.01) %>%
 ```{r genes of interest correlation residuals and expression levels}
 
 
- analysis <- "switches/opposite_linear/OFC"
- cpm_all_long_OFC <- 
-  read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_OFC.txt" )
+#analysis <- "switches/opposite_linear/OFC"
+#cpm_all_long_OFC <-
+# read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_OFC.txt" )
+#age_trend_genes_linear_adj <-
+#  read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt")
+#cpm_all_long <- cpm_all_long_OFC
+
+ analysis <- "switches/opposite_linear/CC"
+ cpm_all_long_CC <-
+   read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_CC.txt" )
  age_trend_genes_linear_adj <-
-   read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt")
- cpm_all_long <- cpm_all_long_OFC
-
-# analysis <- "switches/opposite_linear/CC"
-# cpm_all_long_CC <- 
- #  read_tsv("~/proj_Maryland_WGCNA/analysis/cpm_all_long_CC.txt" )
-# age_trend_genes_linear_adj <-
-#   read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt")
-# cpm_all_long <- cpm_all_long_CC
+   read_tsv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt")
+ cpm_all_long <- cpm_all_long_CC
 
 
-coeff_min <- 0#the minimum linear coefficient included in the analysis
-sig_level <- 0.01
-res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+coeff_min <- 0 #the minimum linear coefficient included in the analysis
+#sig_level <- 0.01
+sig_level <- 0.05
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/FDR_", sig_level, "/")
+
+
+
+#create a new directory with sig_level if it doesn't exist
+if (!dir.exists(res_dir)) {
+  dir.create(res_dir, recursive = TRUE)
+}
+
 
 library(corrplot)
 library(directlabels)
@@ -1782,27 +1814,36 @@ GO_enrich <-
 
 ego@result %>% filter(p.adjust < sig_level) %>% filter(ID %in% gse@result$ID[gse@result$p.adjust < sig_level]) %>% dim()
 
+
+#or we can just take the first one
+pairs_GO_equal <- 
+  pairs_GO_equal %>% 
+  group_by(Var1, Var2) %>% 
+  dplyr::slice(1) %>% 
+  ungroup() %>% 
+  distinct()
 ```
 
 
 ```{r find interesting time-trend genes}
+library(gridExtra)
 #use GO-annotation to find interesting genes
 ##check expression OFC
-res_dir <- "~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/"
-cpm_all_long <- cpm_all_long_OFC
-age_trend_genes_linear_adj <-
+#res_dir <- "~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/"
+#cpm_all_long <- cpm_all_long_OFC
+#age_trend_genes_linear_adj <-
  read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt"  )
 
 
 ## CC
 # res_dir <- "~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/"
-# cpm_all_long <- cpm_all_long_CC
+ cpm_all_long <- cpm_all_long_CC
 # 
-# age_trend_genes_linear_adj <- 
-#   read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt"  )
+ age_trend_genes_linear_adj <- 
+   read_tsv( file ="~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt"  )
 
 age_trend_linear_GO <- age_trend_genes_linear_adj %>% 
-  filter(p_linear_adj < 0.01) %>% 
+  filter(p_linear_adj < sig_level) %>% 
   left_join(GOall_BP, by= c("ensembl_gene_id" = "ENSEMBL"))
 
 #find the GO-terms with most age-trend genes
@@ -1843,8 +1884,7 @@ plot_list_top_terms[[i]] <-
 
 plot_4_top_terms <- arrangeGrob(grobs = plot_list_top_terms 
                            )
-
-#ggsave(plot_4_top_terms,  file= paste0(res_dir, "plot_linear_4_top_terms.pdf"))
+ggsave(plot_4_top_terms,  file= paste0(res_dir, "plot_linear_4_top_terms.pdf"))
 
 
 ```
@@ -1857,7 +1897,17 @@ Method when total list of genes is too large to do all against all correlation
 #  select(Var1, Var2) %>% 
 #  distinct()
 
-#loop over pairs of interest's expression level and calculate correlations (with p-values)
+#import saved residuals
+#res_poly_all_df <- read_csv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/res_poly_all_df.txt")
+
+#import saved residuals, CC
+res_poly_all_df <- read_csv("~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/res_poly_all_df.txt")
+
+#make sure it is a dataframe with gene names as rownames
+res_poly_all_df <- res_poly_all_df %>% column_to_rownames(var = "...1")
+
+
+
 #loop over pairs of interest's residual levels and calculate correlations (with p-values)
 cor_subset <- cpm_all_wide[, colnames(cpm_all_wide) %in% c(pairs[,1], pairs[,2]) ]
 cor_subset_genes <- colnames(cor_subset)
@@ -1867,13 +1917,13 @@ counter <- 0
 
 for(i in seq(1:length(rownames(pairs)))){
   #define genes from one pair at a time
-  geneX = pairs[i,1]
-  geneY = pairs[i,2]
+  geneX = as.vector(pairs[i,1])
+  geneY = as.vector(pairs[i,2])
 
   #correlations and p-values: expression
   cor_p = cor.test(cor_subset[,geneX], cor_subset[,geneY], conf.level = 0.95)
   #correlations and p-values: residuals
-  cor_res_p = cor.test(res_poly_all_df[geneX,], res_poly_all_df[geneY,], conf.level = 0.95)
+  cor_res_p = cor.test(as.numeric(res_poly_all_df[geneX,]), as.numeric(res_poly_all_df[geneY,]), conf.level = 0.95)
 
   corr_res_expr_loop = rbind(corr_res_expr_loop, cbind(cor_p$estimate, cor_p$p.value, cor_res_p$estimate, cor_res_p$p.value, geneX, geneY))
 
@@ -1937,7 +1987,7 @@ Mres_p <- Mres$p
 
 
 #corrplot(M, p.mat = Res$p, method = 'circle', type = 'lower', insig='blank',
-#         order = 'AOE', diag = FALSE)$corrPos -> p1
+ #        order = 'AOE', diag = FALSE)$corrPos -> p1
 #text(p1$x, p1$y, round(p1$corr, 2))
 
 #combine correlations and p-values for both expression and residuals. Remove the bottom triangle of the matrices (now "NA"), i.e only include one entry per gene pair
@@ -2024,65 +2074,65 @@ corr_res_expr <-
 
 
 
-#IA's idea: only keep gene pairs that have their fitted line cross each other
-#linear slope and intercept
-linear_slope_intrcpt <- cpm_all_long %>%     
-  group_by(ensembl_gene_id) %>% 
-    do({
-        mod = lm(log_cpm ~ AGE, data = .)
-        data.frame(Intercept = coef(mod)[1],
-                   Slope = coef(mod)[2])
-    })
-
-intersect <- function(intX, intY, slX, slY){   #2 lines defined by intercept and slope (geneX and geneY). https://en.wikipedia.org/wiki/Line%E2%80%93line_intersection#Given_two_line_equations
-    x <- (intY - intX) / (slX - slY) 
-    y <- intX + slX * x
-    return(xy=c(x, y)) #NA if they don't cross
-}
+# #IA's idea: only keep gene pairs that have their fitted line cross each other
+# #linear slope and intercept
+# linear_slope_intrcpt <- cpm_all_long %>%     
+#   group_by(ensembl_gene_id) %>% 
+#     do({
+#         mod = lm(log_cpm ~ AGE, data = .)
+#         data.frame(Intercept = coef(mod)[1],
+#                    Slope = coef(mod)[2])
+#     })
+# 
+# intersect <- function(intX, intY, slX, slY){   #2 lines defined by intercept and slope (geneX and geneY). https://en.wikipedia.org/wiki/Line%E2%80%93line_intersection#Given_two_line_equations
+#     x <- (intY - intX) / (slX - slY) 
+#     y <- intX + slX * x
+#     return(xy=c(x, y)) #NA if they don't cross
+# }
 
 
 #connect genes into pairs and have their intercepts and slopes side-by-side
-corr_res_expr_intersect <- 
-  corr_res_expr %>% 
-  left_join(linear_slope_intrcpt, by= c("geneX" = "ensembl_gene_id")) %>% 
-  dplyr::rename("Intercept_geneX"= Intercept, "Slope_geneX"= Slope)
-
-corr_res_expr_intersect <- 
-  corr_res_expr_intersect %>% 
-  left_join(linear_slope_intrcpt, by= c("geneY" = "ensembl_gene_id")) %>% 
-  dplyr::rename("Intercept_geneY"= Intercept, "Slope_geneY"= Slope)
-
-intersections <- base::mapply(intersect, 
-                        corr_res_expr_intersect$Intercept_geneX, 
-                        corr_res_expr_intersect$Intercept_geneY,
-                        corr_res_expr_intersect$Slope_geneX,
-                        corr_res_expr_intersect$Slope_geneY)
-
-corr_res_expr_intersect$intersect_x <- intersections[1,]
-corr_res_expr_intersect$intersect_y <- intersections[2,]
-
-#check to see if it intersects during range of ages
-low_age <- range(cpm_all_long$AGE)[1]
-high_age <- range(cpm_all_long$AGE)[2]
-
-corr_res_expr_intersect <-
-  corr_res_expr_intersect %>% 
-  mutate(intersect_in_range = ifelse(between(intersect_x, low_age, high_age),
-         TRUE,
-         FALSE
-         )) 
-
-
-#visualise intersection points (age)
-corr_res_expr_intersect %>% 
-  filter(intersect_in_range ==TRUE) %>% 
-  ggplot(aes(x= intersect_x, y=intersect_y )) +
-  geom_bin_2d() +
-  geom_vline(xintercept = low_age) +
-  geom_vline(xintercept = high_age) 
-
-
-corr_res_expr <- corr_res_expr_intersect %>% filter(intersect_in_range == TRUE)
+# corr_res_expr_intersect <- 
+#   corr_res_expr %>% 
+#   left_join(linear_slope_intrcpt, by= c("geneX" = "ensembl_gene_id")) %>% 
+#   dplyr::rename("Intercept_geneX"= Intercept, "Slope_geneX"= Slope)
+# 
+# corr_res_expr_intersect <- 
+#   corr_res_expr_intersect %>% 
+#   left_join(linear_slope_intrcpt, by= c("geneY" = "ensembl_gene_id")) %>% 
+#   dplyr::rename("Intercept_geneY"= Intercept, "Slope_geneY"= Slope)
+# 
+# intersections <- base::mapply(intersect, 
+#                         corr_res_expr_intersect$Intercept_geneX, 
+#                         corr_res_expr_intersect$Intercept_geneY,
+#                         corr_res_expr_intersect$Slope_geneX,
+#                         corr_res_expr_intersect$Slope_geneY)
+# 
+# corr_res_expr_intersect$intersect_x <- intersections[1,]
+# corr_res_expr_intersect$intersect_y <- intersections[2,]
+# 
+# #check to see if it intersects during range of ages
+# low_age <- range(cpm_all_long$AGE)[1]
+# high_age <- range(cpm_all_long$AGE)[2]
+# 
+# corr_res_expr_intersect <-
+#   corr_res_expr_intersect %>% 
+#   mutate(intersect_in_range = ifelse(between(intersect_x, low_age, high_age),
+#          TRUE,
+#          FALSE
+#          )) 
+# 
+# 
+# #visualise intersection points (age)
+# corr_res_expr_intersect %>% 
+#   filter(intersect_in_range ==TRUE) %>% 
+#   ggplot(aes(x= intersect_x, y=intersect_y )) +
+#   geom_bin_2d() +
+#   geom_vline(xintercept = low_age) +
+#   geom_vline(xintercept = high_age) 
+# 
+# 
+# corr_res_expr <- corr_res_expr_intersect %>% filter(intersect_in_range == TRUE)
 
 
 corr_res_expr_GO_equal <- 
@@ -2094,7 +2144,7 @@ corr_res_expr_GO_equal <-
 
 
 
-p_thr = 0.01
+p_thr = sig_level
 cor_thr = 0.5
 
 #categorise whether significant in both expr and res
@@ -2256,7 +2306,10 @@ plot_neg_cor <- plotlist$neg_expr_neg_res
 #ggsave(plot_pos_cor, file = paste0(res_dir, "plot_expr_pos_cor.pdf")) 
 #ggsave(cat_count, file = paste0(res_dir, "cat_count.pdf"))    
 #save correlation values   
-#write_tsv(corr_res_expr_cat, file = paste0(res_dir, "corr_res_expr_cat.txt"))
+write_tsv(corr_res_expr_cat, file = paste0(res_dir, "corr_res_expr_cat.txt"))
+
+#save the gene pairs with equal GO-terms 
+write_tsv(pairs_GO_equal, file = paste0(res_dir, "pairs_GO_equal.txt"))
 
 #write.csv(corr_res_expr_cat, file = paste0(res_dir, "corr_res_expr_cat.txt"), sep  = "\t")
 ```
@@ -2280,8 +2333,8 @@ counter <- 0
 
 for(i in seq(1:length(rownames(pairs)))){
   #define genes from one pair at a time
-  geneX = pairs[i,1]
-  geneY = pairs[i,2]
+  geneX = as.vector(pairs[i,1])
+  geneY = as.vector(pairs[i,2])
 
   #correlations and p-values: expression
   cor_p = cor.test(cor_subset[,geneX], cor_subset[,geneY], conf.level = 0.95)
@@ -2369,6 +2422,9 @@ corr_res_expr_vis %>%
   distinct() %>% head(n=4) %>% 
   left_join(select(pairs_GO_equal, Var1, Var2, GO, Term), by = c("geneX" = "Var1", "geneY" = "Var2")) %>%    select(21:24)
 
+#save the table with gene pairs and GO-terms
+write_tsv(corr_res_expr_vis, file = paste0(res_dir, "corr_res_expr_vis.txt"))
+
 ```
 
 
@@ -2392,9 +2448,15 @@ corr_res_expr_paralog2 <-
   distinct()
 
 corr_res_expr_paralog <- bind_rows(corr_res_expr_paralog1, corr_res_expr_paralog2) %>%  distinct()
- 
 
-p_thr = 0.01
+#keep only the highest hsapiens_paralog_perc_id 
+corr_res_expr_paralog <-
+  corr_res_expr_paralog %>% 
+  group_by(geneX, geneY) %>% 
+  slice_max(hsapiens_paralog_perc_id) %>% 
+  ungroup()
+
+p_thr = sig_level
 cor_thr = 0.5
 
 #categorise whether significant in both expr and res
@@ -2543,6 +2605,9 @@ pos = visualise_expr %>% group_by(pair) %>%
        x= 15, y= y.pos), 
        colour= "black" ) 
    
+   #save paralog pairs
+   write_tsv(corr_res_expr_paralog, file = paste0(res_dir, "corr_res_expr_paralog.txt"))
+   
 ```
 
 
@@ -2555,6 +2620,13 @@ library(enrichplot)
 library(DOSE)
 library(rrvgo) # Reduce + Visualize GO by identifying redundance based on semantic similarity.
 
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/", "FDR_",sig_level, "/")
+#res_region <- read_tsv( paste0(res_dir, "/de_limma.txt")) #after it has been saved, in stead of rerunning analysis
+
+#create a new directory with sig_level if it doesn't exist
+if (!dir.exists(res_dir)) {
+  dir.create(res_dir, recursive = TRUE)
+}
 
  
 #BP: Biological Process 
@@ -2562,32 +2634,89 @@ library(rrvgo) # Reduce + Visualize GO by identifying redundance based on semant
 #MF: Molecular Function
 
 # below vs above 12 years-old, OFC
-gene <- rownames(DE_0.01_OFC[DE_0.01_OFC$adj.P.Val < 0.01,])
+gene <- DE_OFC$ensembl_gene_id[DE_OFC$adj.P.Val < sig_level]
 analysis <- "OFC_DE_below12"
-res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/", "FDR_",sig_level, "/")
+
+#highest in children, OFC
+sig_level <- 0.05
+analysis <- "OFC_DE_high_below12"
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/", "FDR_",sig_level, "/")
+gene <- DE_OFC$ensembl_gene_id[DE_OFC$adj.P.Val < sig_level & DE_OFC$logFC > 0]
+
+#lower in children, OFC
+sig_level <- 0.05
+analysis <- "OFC_DE_low_below12"
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/", "FDR_",sig_level, "/")
+gene <- DE_OFC$ensembl_gene_id[DE_OFC$adj.P.Val < sig_level & DE_OFC$logFC < 0]
 
 # below vs above 12 years-old, CC
-gene <- rownames(DE_0.01_CC[DE_0.01_CC$adj.P.Val < 0.01,])
+gene <- DE_CC$ensembl_gene_id[DE_CC$adj.P.Val < sig_level]
 analysis <- "CC_DE_below12"
-res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/", "FDR_",sig_level, "/")
+
+#highest in children, CC
+sig_level <- 0.05
+analysis <- "CC_DE_high_below12"
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/", "FDR_",sig_level, "/")
+gene <- DE_CC$ensembl_gene_id[DE_CC$adj.P.Val < sig_level & DE_CC$logFC > 0]
+
+#lower in children, CC
+sig_level <- 0.05
+analysis <- "CC_DE_low_below12"
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/", "FDR_",sig_level, "/")
+gene <- DE_CC$ensembl_gene_id[DE_CC$adj.P.Val < sig_level & DE_CC$logFC < 0]
+
+
 
 #OFC higher than CC
 analysis <- "higherOFC"
-res_dir <- "~/proj_Maryland_WGCNA/analysis/OFC_CC_DE/highOFC/"
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/OFC_CC_DE/", analysis, "/", "FDR_",sig_level, "/")
 res <- res_region
-gene <- high_OFC_FDR_001$ensembl_gene_id
+gene <- high_OFC_FDR$ensembl_gene_id
 
 #CC higher than OFC
 analysis <- "higherCC"
-res_dir <- "~/proj_Maryland_WGCNA/analysis/OFC_CC_DE/highCC/"
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/OFC_CC_DE/", analysis, "/", "FDR_",sig_level, "/")
 res <- res_region
-gene <- low_OFC_FDR_001$ensembl_gene_id
+gene <- low_OFC_FDR$ensembl_gene_id
 
-#Genes with significant age-coefficient
-#gene <- age_trend_genes_linear$ensembl_gene_id
-# analysis <- "age_trend_genes_OFC"
- #analysis <- "age_trend_genes_CC"
-#res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+#Genes with significant age-coefficient OFC
+age_trend_genes_linear_adj <- read_tsv(  "~/proj_Maryland_WGCNA/analysis/age_trend_genes_OFC/age_trend_linear.txt" )
+
+analysis <- paste0("age_trend_genes_linear_OFC",
+                   "_", "FDR_", sig_level, "_upwards")
+
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+
+#use genes with significant age-trend, upwards
+gene <- age_trend_genes_linear_adj %>% filter(p_linear_adj < sig_level, lin_coeff > 0) %>% select(ensembl_gene_id)
+gene <- gene$ensembl_gene_id
+
+#use genes with significant age-trend, downwards
+analysis <- paste0("age_trend_genes_linear_OFC",
+                   "_", "FDR_", sig_level, "_downwards")
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+
+gene <- age_trend_genes_linear_adj %>% filter(p_linear_adj < sig_level, lin_coeff < 0) %>% select(ensembl_gene_id)
+gene <- gene$ensembl_gene_id
+
+
+#Genes with significant age-coefficient CC
+age_trend_genes_linear_adj <- read_tsv(  "~/proj_Maryland_WGCNA/analysis/age_trend_genes_CC/age_trend_linear.txt" )
+analysis <- paste0("age_trend_genes_linear_CC",
+                   "_", "FDR_", sig_level, "_upwards")
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+#use genes with significant age-trend, upwards
+gene <- age_trend_genes_linear_adj %>% filter(p_linear_adj < sig_level, lin_coeff > 0) %>% select(ensembl_gene_id)
+gene <- gene$ensembl_gene_id
+
+#use genes with significant age-trend, downwards
+analysis <- paste0("age_trend_genes_linear_CC",
+                   "_", "FDR_", sig_level, "_downwards")
+res_dir <- paste0("~/proj_Maryland_WGCNA/analysis/", analysis, "/")
+gene <- age_trend_genes_linear_adj %>% filter(p_linear_adj < sig_level, lin_coeff < 0) %>% select(ensembl_gene_id)
+gene <- gene$ensembl_gene_id
 
 #gene <- rownames(res[res$adj.P.Val < 0.05,])
 
@@ -2599,7 +2728,10 @@ neg_corr_gene_pairs <-
 
 gene <- unique(genemap2$ensembl_gene_id[genemap2$ensembl_gene_id %in% neg_corr_gene_pairs$geneX | genemap2$ensembl_gene_id %in% neg_corr_gene_pairs$geneY])
 
-
+#create a new directory with sig_level if it doesn't exist
+if (!dir.exists(res_dir)) {
+  dir.create(res_dir, recursive = TRUE)
+}
 
 #GO over-representation analysis
 ego <- enrichGO(gene          = gene,
@@ -2696,15 +2828,15 @@ totalGenes <- length(unique(gene))
          )
   
  ggsave(parentGO_plot, file = paste0(res_dir, "/plot_reducedGOenrich.pdf" ),
-       height = length(ego_red_sign$ID)/3, 
-       #height= 12,
+       #height = length(ego_red_sign$ID)/3, 
+       height= 12,
       width= 18, units = "cm")  
   
- #ggsave(GO_dotplot, file = paste0(res_dir, "/plot_GOenrich.pdf" ))  
+ ggsave(GO_dotplot, file = paste0(res_dir, "/plot_GOenrich.pdf" ))  
    
-  ggsave(GO_dotplot, file = paste0(res_dir, "/plot_GOenrich.pdf"),
-       height= 30,
-        width= 18, units = "cm" )  
+  #ggsave(GO_dotplot, file = paste0(res_dir, "/plot_GOenrich.pdf"),
+   #    height= 30,
+    #    width= 18, units = "cm" )  
   
 
   write_tsv(ego_red_sign_total, file = paste0(res_dir, "ego_red_sign_total.txt"))
@@ -2826,7 +2958,7 @@ totalGenes <- length(unique(geneList))
   
  ggsave(GO_dotplot, file = paste0(res_dir, "/plot_GOenrich.pdf" ))  
  
- write_tsv(gse_red_sign_total, file = paste0(res_dir, "gse_parent_linear_coeff.txt"))
+ #write_tsv(gse_red_sign_total, file = paste0(res_dir, "gse_parent_linear_coeff.txt"))
 
 ```
 
@@ -2928,6 +3060,9 @@ expr_age_GWAS_l2g_OFC <-
  
   
 ```
+
+
+
 
 ```{r GWAS overlap BD 100 kb}
 
@@ -3062,6 +3197,7 @@ myelin_genes <- readxl::read_xlsx("~/PhD/RNAseq_temporal/genes_of_interest/stoko
                                   sheet = "SupplementaryFile1_170306.txt")
 
 
+
 expr_age_GWAS_myelin_CC <- 
   cpm_all_long_CC %>% 
   filter(gene_id %in% age_trend_genes_linear_GWAS_CC$symbol) %>% 
@@ -3080,18 +3216,60 @@ expr_age_GWAS_myelin_OFC <-
     geom_point() + 
     facet_wrap(~gene_id, scales = "free_y") +
     geom_smooth(method = lm, formula = y ~ poly(x, 2), se = FALSE) 
+
+
+#
+# Hvis jeg forstår spørsmålet ditt riktig, så kan du kjøre en Fisher-test i R. Hvis vi for eksempel antar at 117 av 20,000 gener i GO-databasen er involvert i myelinering, og at du finner 100 gener med en signifikant linear trend over tid (FDR<0.05), hvorav 10 gener overlapper med de 117 myelineringsgenene, kan du gjøre følgende i R:
+# 
+# dat <- data.frame(
+#     myelin_yes = c(10, 107),
+#     myelin_no = c(90, 19793),
+#     row.names = c("trend_yes", "trend_no")
+# )
+#fisher.test(dat)
+
+overlap_n <- length(myelin_genes$`ENSEMBL ID`[myelin_genes$`ENSEMBL ID` %in% c(pos_linear$ensembl_gene_id, neg_linear$ensembl_gene_id)])
+myelin_n <- length(myelin_genes$`ENSEMBL ID`)
+total_genes <- length(unique(age_trend_genes_linear_adj$ensembl_gene_id))
+GOI_n <- length(unique(c(pos_linear$ensembl_gene_id, neg_linear$ensembl_gene_id)))
+
+#fisher test of enrichment, myelination genes
+ dat <- data.frame(
+     myelin_yes = c(overlap_n, myelin_n - overlap_n ),
+     myelin_no = c(GOI_n -overlap_n, total_genes - myelin_n),
+     row.names = c("trend_yes", "trend_no")
+ )
+
+fisher.test(dat, alternative = "greater")
+
 ```
 
 
 ```{r synaptic plasticity genes}
 synaptic_plast_genes <- read_csv("~/PhD/RNAseq_relative/SCZ/functional_sets/Tuomo_synaptic_plasticity/genes_new.txt", col_names = FALSE)
+synaptic_plast_genes <- synaptic_plast_genes %>% rename(external_gene_name = X1)
 
+synaptic_plast_genes <- synaptic_plast_genes %>% 
+  left_join(select(genemap, ensembl_gene_id, external_gene_name), by= "external_gene_name") %>% 
+  filter(external_gene_name != "")
 
+overlap_n <- length(synaptic_plast_genes$ensembl_gene_id[synaptic_plast_genes$ensembl_gene_id %in% c(pos_linear$ensembl_gene_id, neg_linear$ensembl_gene_id)])
+synaptic_plast_n <- length(synaptic_plast_genes$ensembl_gene_id)
+total_genes <- length(unique(age_trend_genes_linear_adj$ensembl_gene_id))
+GOI_n <- length(unique(c(pos_linear$ensembl_gene_id, neg_linear$ensembl_gene_id)))
+
+#fisher test of enrichment, synaptic plasticity genes
+ dat <- data.frame(
+     synaptic_yes = c(overlap_n, synaptic_plast_n - overlap_n ),
+     synaptic_no = c(GOI_n -overlap_n, total_genes - synaptic_plast_n),
+     row.names = c("trend_yes", "trend_no")
+ )
+fisher.test(dat, alternative = "greater")
 
 ```
 Questions:
 X Higher variance in <12? 
--> Could we find examples of genes with higher variance below 12?
+XCould we find examples of genes with higher variance below 12?
 
 X Find pairs of switches (channel subunits etc). Plot their expression with age.
 X Especially at paralog pairs. 
